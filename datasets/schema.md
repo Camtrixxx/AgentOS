@@ -48,3 +48,27 @@ Contains dense arrays for quick training scripts:
 
 This simple format is intentionally close to imitation learning and VLA fine-tuning datasets. Later versions can add camera images, robot proprioception, language embeddings, and simulator states.
 
+## Current BC Feature Format
+
+The first behavior cloning baseline does not train from raw JSON observations directly. It converts each observation into a compact state vector in `learning/features.py`:
+
+```text
+[
+  ee_x, ee_y,
+  target_x, target_y,
+  bowl_x, bowl_y,
+  target_minus_ee_x, target_minus_ee_y,
+  bowl_minus_ee_x, bowl_minus_ee_y,
+  gripper_closed,
+  holding_target,
+  target_color_red,
+  target_color_blue,
+  target_color_green
+]
+```
+
+The action target remains:
+
+```text
+[dx, dy, gripper]
+```

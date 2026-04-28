@@ -55,6 +55,18 @@ python scripts/run_agent.py --record
 python scripts/collect_demo.py --num-episodes 3
 ```
 
+训练第一版 behavior cloning policy：
+
+```bash
+python learning/train_bc.py --epochs 200
+```
+
+评估训练好的 BC policy：
+
+```bash
+python learning/evaluate_policy.py --policy bc --num-episodes 9
+```
+
 记录结果会保存到：
 
 ```text

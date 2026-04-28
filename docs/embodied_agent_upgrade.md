@@ -48,6 +48,18 @@ python scripts/run_agent.py --record
 python scripts/collect_demo.py --num-episodes 3
 ```
 
+训练 behavior cloning policy：
+
+```bash
+python learning/train_bc.py --epochs 200
+```
+
+评估训练好的 BC policy：
+
+```bash
+python learning/evaluate_policy.py --policy bc --num-episodes 9
+```
+
 ## 运行后发生的事
 
 运行：
@@ -161,12 +173,56 @@ data/demos/episode_xxxxxx/
 
 这为后续 imitation learning 和 VLA fine-tuning 打基础。
 
+## Behavior Cloning
+
+当前项目已经加入第一版 BC imitation learning 闭环。
+
+数据来源：
+
+```text
+ScriptedPickPlacePolicy -> EpisodeRecorder -> data/demos
+```
+
+训练目标：
+
+```text
+observation features -> action [dx, dy, gripper]
+```
+
+当前使用的 observation features 是状态特征，不是图像：
+
+- 末端执行器位置 `ee_position`
+- 目标物体位置
+- `bowl` 位置
+- 目标物体相对末端执行器的位置
+- `bowl` 相对末端执行器的位置
+- 夹爪是否闭合
+- 当前是否抓住目标物体
+- 目标颜色 one-hot
+
+对应代码：
+
+```text
+learning/features.py
+learning/demo_dataset.py
+learning/models.py
+learning/train_bc.py
+learning/evaluate_policy.py
+agent/bc_policy.py
+```
+
+这一步的意义是把项目从“规则 Agent”推进到“可学习 Agent”：
+
+```text
+采集专家数据 -> 训练策略模型 -> 替换规则策略 -> 在环境中评估成功率
+```
+
 ## 后续建议
 
 下一步最自然的升级是：
 
-1. 加 `learning/train_bc.py`，用 recorded episodes 训练一个小 MLP policy。
-2. 加 `scripts/evaluate_policy.py`，统计 success rate。
-3. 加 image observation，把 fake environment 渲染成简单 RGB 图。
-4. 把 `FakeManipulationEnv` 替换或并列接入 LIBERO / robosuite / ManiSkill。
-5. 实现 `VLAPolicy`，对接 OpenVLA 或其它 VLA 模型。
+1. 增加更多随机初始位置，避免 BC 只记住固定轨迹。
+2. 加 image observation，把 fake environment 渲染成简单 RGB 图。
+3. 把 `FakeManipulationEnv` 替换或并列接入 LIBERO / robosuite / ManiSkill。
+4. 实现 `VLAPolicy`，对接 OpenVLA 或其它 VLA 模型。
+5. 加统一 `RobotAction`，把 Agent、teleop 和后续 C++ 控制 bridge 接到同一套动作接口。
