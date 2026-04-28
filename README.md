@@ -1,132 +1,165 @@
 # Embodied Teleop Control Lab
 
-一个面向具身智能入门和作品集展示的遥操作到机器人控制项目。
-
-项目主线：
+一个 simulation-first 的具身智能学习项目，用来从零搭建：
 
 ```text
-stereo hand keypoints -> 3D hand skeleton -> retargeting -> safety limiter -> robot backend
+teleoperation/control -> embodied agent loop -> imitation learning -> vision policy -> VLA-ready interface
 ```
 
-当前版本先提供一个不依赖真实硬件的 MVP。它用合成手部数据模拟双目相机观测，恢复 3D 手部关键点，生成机器人手部控制量，并发送给 `FakeRobotBackend`。
+当前项目不依赖真实机器人即可运行。它包含 fake manipulation 环境、RGB observation、demonstration collection、BC / VisionBC 训练、随机化布局评估、evaluation report，以及可替换的 VLA backend 接口。
 
-## Why This Project
+## What It Does
 
-这类项目比单独写一个控制节点更适合作为具身智能作品，因为它覆盖了完整链路：
+项目目前有两条主线。
 
-- 感知：双目 2D 关键点到 3D 手部骨架
-- 动作表示：人手骨架到机器人手部命令
-- 控制安全：关节限幅、速度限制
-- 后端抽象：先接 fake backend，后续可替换为 Unitree / Inspire Hand / ROS2 backend
-- 可扩展：后续可以接 IK、仿真、模仿学习和真实机器人
+第一条是遥操作到控制管线：
+
+```text
+synthetic hand keypoints
+-> stereo triangulation
+-> hand retargeting
+-> safety limiter
+-> fake robot backend
+```
+
+第二条是具身 Agent 学习闭环：
+
+```text
+language instruction
+-> RGB image + state observation
+-> policy / VLA backend
+-> action [dx, dy, gripper]
+-> fake manipulation environment
+-> evaluation report
+```
+
+已经实现的能力：
+
+- 双目手部 3D 重建 demo
+- 手部 retargeting baseline
+- safety limiter 和 fake robot backend
+- 语言条件 pick-and-place fake 环境
+- RGB render 和 image observation
+- scripted expert policy
+- state BC imitation learning
+- VisionBC imitation learning
+- 随机化布局训练和评估
+- JSON / Markdown evaluation report
+- VLA-ready adapter 和 mock VLA backend
 
 ## Quick Start
 
+进入项目：
+
 ```bash
 cd /workspace/hyh/embodied-teleop-control-lab
+```
+
+最快确认项目能跑：
+
+```bash
+bash scripts/sh/00_smoke_test.sh
+```
+
+它会运行：
+
+```text
+teleop/control demo
+scripted embodied agent
+RGB render
+mock VLA randomized evaluation report
+```
+
+详细运行说明见：
+
+[docs/running_guide.md](docs/running_guide.md)
+
+## Common Commands
+
+运行遥操作到控制 demo：
+
+```bash
 python examples/run_fake_pipeline.py
 ```
 
-期望输出类似：
-
-```text
-reconstruction_error_m 0.0
-safe_command [...]
-robot_frame_id 1
-```
-
-## Run The Embodied Agent Demo
-
-运行一个语言条件 pick-and-place fake 环境：
+运行具身 Agent：
 
 ```bash
 python scripts/run_agent.py
 ```
 
-运行时在 observation 中加入 RGB image：
-
-```bash
-python scripts/run_agent.py --include-image
-```
-
-导出 fake 环境的 RGB 预览图：
+导出 RGB 环境图：
 
 ```bash
 python scripts/render_fake_env.py --output outputs/fake_env.ppm
 ```
 
-记录一条 episode 数据：
+采集随机化视觉 demonstrations：
 
 ```bash
-python scripts/run_agent.py --record
+bash scripts/sh/03_collect_vision_demos_random.sh
 ```
 
-批量采集 scripted demonstrations：
+训练随机化 VisionBC：
 
 ```bash
-python scripts/collect_demo.py --num-episodes 3
+bash scripts/sh/04_train_vision_bc_random.sh
 ```
 
-训练第一版 behavior cloning policy：
+评估随机化 VisionBC 并生成报告：
 
 ```bash
-python learning/train_bc.py --epochs 200
-```
-
-评估训练好的 BC policy：
-
-```bash
-python learning/evaluate_policy.py --policy bc --num-episodes 9
-```
-
-采集视觉 demonstrations：
-
-```bash
-python scripts/collect_vision_demo.py --num-episodes 60
-```
-
-采集随机化布局的视觉 demonstrations：
-
-```bash
-python scripts/collect_vision_demo.py --num-episodes 120 --randomize-layout
-```
-
-训练视觉 BC policy：
-
-```bash
-python learning/train_vision_bc.py --epochs 80
-```
-
-评估视觉 BC policy：
-
-```bash
-python learning/evaluate_policy.py --policy vision_bc --checkpoint checkpoints/vision_bc_policy.pt
-```
-
-随机化布局评估：
-
-```bash
-python learning/evaluate_policy.py --policy vision_bc --checkpoint checkpoints/vision_bc_policy.pt --randomize-layout --max-steps 100
-```
-
-生成评估报告：
-
-```bash
-python learning/evaluate_policy.py \
-  --policy vision_bc \
-  --checkpoint checkpoints/vision_bc_random_policy.pt \
-  --randomize-layout \
-  --max-steps 100 \
-  --write-report
-```
-
-报告会保存到：
-
-```text
-outputs/eval_reports/
+bash scripts/sh/05_eval_vision_bc_random.sh
 ```
 
 运行 VLA-ready mock backend：
+
+```bash
+bash scripts/sh/06_eval_mock_vla.sh
+```
+
+清理本地生成物：
+
+```bash
+bash scripts/sh/99_clean_generated.sh
+```
+
+## Project Layout
+
+```text
+adapters/     observation/action adapters for VLA-style backends
+agent/        scripted, BC, VisionBC, and VLA policy wrappers
+configs/      camera, robot, and safety configs
+control/      safety limiter and fake robot backend
+datasets/     episode recorders and dataset schema
+docs/         project docs and running guide
+envs/         fake manipulation environment
+evaluation/   JSON / Markdown evaluation reports
+examples/     runnable small demos
+kinematics/   IK placeholders
+learning/     BC / VisionBC models, datasets, training, evaluation
+perception/   stereo triangulation
+retargeting/  hand retargeting baseline
+scripts/      Python entrypoints and shell shortcuts
+sim/          future simulator integrations
+tests/        lightweight tests
+vla/          VLA backend protocol and mock backend
+```
+
+## VLA-Ready Design
+
+真实 VLA 模型还没有接入，但接口已经准备好：
+
+```text
+FakeManipulationEnv observation
+-> FakeEnvVLAAdapter
+-> VLAObservation(image, instruction, state)
+-> VLABackend.predict(...)
+-> VLAAction(ee_delta, gripper)
+-> env action [dx, dy, gripper]
+```
+
+当前 mock backend 可以这样运行：
 
 ```bash
 python learning/evaluate_policy.py \
@@ -137,46 +170,37 @@ python learning/evaluate_policy.py \
   --write-report
 ```
 
-记录结果会保存到：
+以后接 OpenVLA、LeRobot、SmolVLA、Pi0 或远程模型服务时，主要新增一个 backend，实现：
 
-```text
-data/demos/episode_000000/
-├── metadata.json
-├── transitions.jsonl
-└── arrays.npz
+```python
+predict(observation: VLAObservation) -> VLAAction
 ```
 
-## Project Layout
+## Generated Artifacts
+
+以下目录是运行后生成的，不进入 Git：
 
 ```text
-agent/        language-conditioned policies and rollout loop
-configs/       calibration, robot, safety configs
-datasets/      episode recorder and dataset schema
-envs/          fake embodied manipulation environment
-perception/    stereo triangulation and future keypoint detectors
-retargeting/   human hand/arm pose to robot command mapping
-kinematics/    IK solver adapters
-control/       safety limiter and robot backend abstractions
-ros_nodes/     future ROS2 nodes
-sim/           future MeshCat / MuJoCo / Isaac Sim runners
-tools/         recording, replay, visualization scripts
-tests/         small correctness tests
-examples/      runnable demos
+data/
+outputs/
+checkpoints/
 ```
 
-## Roadmap
+如果磁盘空间不足，可以清理：
 
-1. Replace synthetic hand keypoints with webcam or recorded detector output.
-2. Add MeshCat visualization for hand skeleton and robot command.
-3. Add ROS2 message bridge for command/state topics.
-4. Replace `SimpleHandRetargeter` with robot-specific DexRetargeting.
-5. Add Unitree G1 and Inspire Hand backends behind the same interface.
-6. Record demonstrations and train a small policy for replay.
-7. Connect the agent loop to LIBERO, robosuite, ManiSkill, or Isaac Lab.
-8. Add BC / VLA policy adapters and evaluate language-conditioned tasks.
+```bash
+bash scripts/sh/99_clean_generated.sh
+```
+
+## Documentation
+
+- [docs/running_guide.md](docs/running_guide.md): 怎么运行每个模块
+- [docs/project_overview.md](docs/project_overview.md): 项目整体介绍和设计目标
+- [docs/embodied_agent_upgrade.md](docs/embodied_agent_upgrade.md): Agent / BC / VisionBC / VLA-ready 详细演进
+- [datasets/schema.md](datasets/schema.md): demonstration 数据格式
 
 ## Resume Angle
 
 一句话介绍：
 
-> Built an embodied teleoperation pipeline that converts stereo hand observations into safety-constrained robot commands, with modular perception, retargeting, and backend abstractions for simulation and real hardware.
+> Built a simulation-first embodied intelligence lab with stereo hand reconstruction, safety-constrained control, language-conditioned fake manipulation, demonstration collection, BC/VisionBC training, randomized evaluation, and a VLA-ready backend interface.
