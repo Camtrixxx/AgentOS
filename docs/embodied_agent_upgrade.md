@@ -60,6 +60,36 @@ python learning/train_bc.py --epochs 200
 python learning/evaluate_policy.py --policy bc --num-episodes 9
 ```
 
+开启 RGB image observation：
+
+```bash
+python scripts/run_agent.py --include-image
+```
+
+导出当前 fake 环境的 RGB 预览图：
+
+```bash
+python scripts/render_fake_env.py --output outputs/fake_env.ppm
+```
+
+采集视觉 demonstrations：
+
+```bash
+python scripts/collect_vision_demo.py --num-episodes 60
+```
+
+训练 VisionBCPolicy：
+
+```bash
+python learning/train_vision_bc.py --epochs 80
+```
+
+评估 VisionBCPolicy：
+
+```bash
+python learning/evaluate_policy.py --policy vision_bc --checkpoint checkpoints/vision_bc_policy.pt
+```
+
 ## 运行后发生的事
 
 运行：
@@ -139,6 +169,97 @@ observation -> policy -> action -> environment -> next_observation
 - object positions
 - receptacle positions
 - step count
+- optional RGB image observation
+
+## RGB Render 和 Image Observation
+
+当前环境已经支持 top-down RGB 渲染：
+
+```python
+image = env.render_rgb()
+```
+
+图像格式：
+
+```text
+shape: (128, 128, 3)
+dtype: uint8
+layout: RGB
+```
+
+画面中包含：
+
+- 浅色桌面背景和网格。
+- 红、蓝、绿三个 block。
+- 黄色 `bowl`。
+- 黑色末端执行器和夹爪状态。
+
+默认 observation 不包含 image，避免让当前 JSONL demonstration 过大。需要图像时，可以通过 `FakeManipulationConfig(include_image=True)` 打开：
+
+```python
+config = FakeManipulationConfig(
+    workspace_low=np.array([-1.0, -1.0]),
+    workspace_high=np.array([1.0, 1.0]),
+    include_image=True,
+)
+env = FakeManipulationEnv(config=config)
+observation = env.reset(task)
+image = observation["image"]
+```
+
+这一步的意义是让项目开始具备 VLA 需要的输入形态：
+
+```text
+language instruction + RGB image + state -> action
+```
+
+当前 BC policy 仍然使用状态特征训练，没有使用图像。下一步可以新增 `VisionBCPolicy` 或 `VLAPolicy`，读取 `observation["image"]` 和 `observation["instruction"]`。
+
+## Vision Behavior Cloning
+
+当前项目已经加入第一版视觉模仿学习闭环。
+
+新增数据流：
+
+```text
+ScriptedPickPlacePolicy
+-> FakeManipulationEnv(include_image=True)
+-> VisionEpisodeRecorder
+-> data/vision_demos
+-> train_vision_bc.py
+-> VisionBCPolicy
+-> evaluate_policy.py --policy vision_bc
+```
+
+视觉数据目录结构：
+
+```text
+data/vision_demos/episode_000000/
+├── images/
+│   ├── 000000.npy
+│   ├── 000000_next.npy
+│   └── ...
+├── metadata.json
+├── transitions.jsonl
+└── arrays.npz
+```
+
+`transitions.jsonl` 中不会直接保存大图像数组，而是保存相对路径：
+
+```json
+{
+  "image_path": "images/000000.npy",
+  "action": [0.03, 0.02, -1.0]
+}
+```
+
+`VisionBCPolicy` 使用一个小 CNN 编码 RGB 图像，再拼接任务颜色 one-hot，最后输出动作：
+
+```text
+RGB image + target color -> [dx, dy, gripper]
+```
+
+这一步比直接接真实 VLA 更稳，因为它先把视觉输入、语言/任务条件、动作输出和评估闭环打通了。
 
 ## 当前 Agent
 

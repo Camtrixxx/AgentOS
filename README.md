@@ -43,6 +43,18 @@ robot_frame_id 1
 python scripts/run_agent.py
 ```
 
+运行时在 observation 中加入 RGB image：
+
+```bash
+python scripts/run_agent.py --include-image
+```
+
+导出 fake 环境的 RGB 预览图：
+
+```bash
+python scripts/render_fake_env.py --output outputs/fake_env.ppm
+```
+
 记录一条 episode 数据：
 
 ```bash
@@ -65,6 +77,24 @@ python learning/train_bc.py --epochs 200
 
 ```bash
 python learning/evaluate_policy.py --policy bc --num-episodes 9
+```
+
+采集视觉 demonstrations：
+
+```bash
+python scripts/collect_vision_demo.py --num-episodes 60
+```
+
+训练视觉 BC policy：
+
+```bash
+python learning/train_vision_bc.py --epochs 80
+```
+
+评估视觉 BC policy：
+
+```bash
+python learning/evaluate_policy.py --policy vision_bc --checkpoint checkpoints/vision_bc_policy.pt
 ```
 
 记录结果会保存到：

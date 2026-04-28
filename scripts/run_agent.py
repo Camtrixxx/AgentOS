@@ -4,6 +4,8 @@ import argparse
 import sys
 from pathlib import Path
 
+import numpy as np
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -11,7 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from agent.agent_loop import AgentLoop
 from agent.scripted_policy import ScriptedPickPlacePolicy
 from datasets.episode_recorder import EpisodeRecorder, EpisodeRecorderConfig
-from envs.fake_manipulation_env import FakeManipulationEnv, TaskSpec
+from envs.fake_manipulation_env import FakeManipulationConfig, FakeManipulationEnv, TaskSpec
 
 
 def parse_args() -> argparse.Namespace:
@@ -21,12 +23,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-steps", type=int, default=80)
     parser.add_argument("--record", action="store_true", help="Record the rollout under data/demos")
     parser.add_argument("--output-dir", default="data/demos")
+    parser.add_argument("--include-image", action="store_true", help="Include rendered RGB images in observations")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    env = FakeManipulationEnv(seed=0)
+    config = FakeManipulationConfig(
+        workspace_low=np.array([-1.0, -1.0], dtype=float),
+        workspace_high=np.array([1.0, 1.0], dtype=float),
+        include_image=args.include_image,
+    )
+    env = FakeManipulationEnv(config=config, seed=0)
     policy = ScriptedPickPlacePolicy()
     recorder = None
     if args.record:
@@ -43,4 +51,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
