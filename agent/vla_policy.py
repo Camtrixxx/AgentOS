@@ -4,17 +4,27 @@ from typing import Any
 
 import numpy as np
 
+from adapters.vla_adapter import FakeEnvVLAAdapter
+from vla.base import VLABackend
+from vla.mock_backend import MockVLABackend
+
 
 class VLAPolicy:
-    """Adapter placeholder for future Vision-Language-Action models.
+    """Policy wrapper for Vision-Language-Action backends.
 
-    A real implementation can wrap OpenVLA, a fine-tuned policy, or a remote
-    inference service while keeping the same ``act(observation) -> action`` API.
+    The backend can be a mock implementation, a local VLA model, or a remote
+    inference service. The policy keeps the AgentLoop API stable.
     """
 
-    def act(self, observation: dict[str, Any]) -> np.ndarray:
-        raise NotImplementedError(
-            "VLAPolicy is an adapter placeholder. Start with ScriptedPickPlacePolicy "
-            "or implement this class with a VLA inference backend."
-        )
+    def __init__(
+        self,
+        backend: VLABackend | None = None,
+        adapter: FakeEnvVLAAdapter | None = None,
+    ):
+        self.backend = backend or MockVLABackend()
+        self.adapter = adapter or FakeEnvVLAAdapter()
 
+    def act(self, observation: dict[str, Any]) -> np.ndarray:
+        vla_observation = self.adapter.observation_to_vla(observation)
+        vla_action = self.backend.predict(vla_observation)
+        return self.adapter.action_from_vla(vla_action)

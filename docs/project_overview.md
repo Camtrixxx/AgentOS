@@ -412,3 +412,19 @@ timestamp: time
 
 这样项目会逐步长成一个可靠的具身智能工程，而不是一组临时脚本。
 
+## 11. 当前 VLA 接入状态
+
+项目已经进入 VLA-ready 状态。
+
+当前已经具备：
+
+- RGB image observation
+- language instruction
+- state observation
+- action `[dx, dy, gripper]`
+- policy evaluation report
+- VLA observation/action adapter
+- mock VLA backend
+- 可替换的 `VLAPolicy`
+
+也就是说，真实 VLA 模型还没有接入，但工程接口已经准备好。下一步接真实模型时，主要工作会集中在新增 backend，而不是重写环境、`AgentLoop` 或评估系统。

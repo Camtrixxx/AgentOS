@@ -109,6 +109,34 @@ python learning/evaluate_policy.py --policy vision_bc --checkpoint checkpoints/v
 python learning/evaluate_policy.py --policy vision_bc --checkpoint checkpoints/vision_bc_policy.pt --randomize-layout --max-steps 100
 ```
 
+生成评估报告：
+
+```bash
+python learning/evaluate_policy.py \
+  --policy vision_bc \
+  --checkpoint checkpoints/vision_bc_random_policy.pt \
+  --randomize-layout \
+  --max-steps 100 \
+  --write-report
+```
+
+报告会保存到：
+
+```text
+outputs/eval_reports/
+```
+
+运行 VLA-ready mock backend：
+
+```bash
+python learning/evaluate_policy.py \
+  --policy vla \
+  --vla-backend mock \
+  --randomize-layout \
+  --max-steps 100 \
+  --write-report
+```
+
 记录结果会保存到：
 
 ```text

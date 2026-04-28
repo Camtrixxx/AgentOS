@@ -102,6 +102,17 @@ python scripts/collect_vision_demo.py --num-episodes 120 --randomize-layout
 python learning/evaluate_policy.py --policy vision_bc --checkpoint checkpoints/vision_bc_policy.pt --randomize-layout --max-steps 100
 ```
 
+生成评估报告：
+
+```bash
+python learning/evaluate_policy.py \
+  --policy vision_bc \
+  --checkpoint checkpoints/vision_bc_random_policy.pt \
+  --randomize-layout \
+  --max-steps 100 \
+  --write-report
+```
+
 ## 运行后发生的事
 
 运行：
@@ -302,6 +313,113 @@ fixed layout demos -> randomized layout demos -> randomized layout evaluation
 ```
 
 如果模型只在固定布局上训练，它很容易记住轨迹；如果在随机化布局上训练和评估，它必须学会根据 observation 调整动作。
+
+## Evaluation Report
+
+当前评估脚本支持生成 JSON 和 Markdown 报告。
+
+命令：
+
+```bash
+python learning/evaluate_policy.py \
+  --policy vision_bc \
+  --checkpoint checkpoints/vision_bc_random_policy.pt \
+  --num-episodes 18 \
+  --randomize-layout \
+  --max-steps 100 \
+  --write-report
+```
+
+输出目录：
+
+```text
+outputs/eval_reports/
+├── eval_YYYYMMDD_HHMMSS_vision_bc.json
+└── eval_YYYYMMDD_HHMMSS_vision_bc.md
+```
+
+报告内容包括：
+
+- policy 名称
+- checkpoint 路径
+- episode 数量
+- max steps
+- 是否随机化布局
+- success rate
+- average steps
+- average reward
+- 每个 episode 的 target color、success、steps、reward、failure reason
+
+这一步让项目开始具备“实验记录”能力。后续比较 `scripted`、`bc`、`vision_bc`、`vla` 时，不需要只靠终端输出判断结果。
+
+## VLA-Ready Interface
+
+当前项目已经具备可替换的 VLA 接口层。
+
+新增结构：
+
+```text
+adapters/
+└── vla_adapter.py
+
+vla/
+├── base.py
+└── mock_backend.py
+
+agent/
+└── vla_policy.py
+```
+
+核心流程：
+
+```text
+FakeManipulationEnv observation
+-> FakeEnvVLAAdapter
+-> VLAObservation(image, instruction, state)
+-> VLABackend.predict(...)
+-> VLAAction(ee_delta, gripper)
+-> FakeEnv action [dx, dy, gripper]
+```
+
+`VLAPolicy` 现在不再是空占位，而是可以接入 `AgentLoop` 的 policy wrapper。
+
+当前可用 backend：
+
+```text
+MockVLABackend
+```
+
+它模拟真实 VLA 后端的接口：
+
+```python
+predict(observation: VLAObservation) -> VLAAction
+```
+
+运行方式：
+
+```bash
+python learning/evaluate_policy.py \
+  --policy vla \
+  --vla-backend mock \
+  --randomize-layout \
+  --max-steps 100 \
+  --write-report
+```
+
+这一步的意义是：以后接 OpenVLA、LeRobot、SmolVLA、Pi0 或远程模型服务时，不需要改 `AgentLoop`，只需要新增一个 backend，实现同样的 `predict()` 接口。
+
+未来真实 VLA backend 可以长这样：
+
+```python
+class OpenVLABackend:
+    name = "openvla"
+
+    def predict(self, observation: VLAObservation) -> VLAAction:
+        image = observation.image
+        instruction = observation.instruction
+        raw_action = self.model.predict(image=image, instruction=instruction)
+        return self.action_adapter(raw_action)
+```
 
 ## 当前 Agent
 
