@@ -90,6 +90,18 @@ python learning/train_vision_bc.py --epochs 80
 python learning/evaluate_policy.py --policy vision_bc --checkpoint checkpoints/vision_bc_policy.pt
 ```
 
+采集随机化布局 demonstrations：
+
+```bash
+python scripts/collect_vision_demo.py --num-episodes 120 --randomize-layout
+```
+
+在随机化布局上评估：
+
+```bash
+python learning/evaluate_policy.py --policy vision_bc --checkpoint checkpoints/vision_bc_policy.pt --randomize-layout --max-steps 100
+```
+
 ## 运行后发生的事
 
 运行：
@@ -260,6 +272,36 @@ RGB image + target color -> [dx, dy, gripper]
 ```
 
 这一步比直接接真实 VLA 更稳，因为它先把视觉输入、语言/任务条件、动作输出和评估闭环打通了。
+
+## Layout Randomization
+
+当前 fake 环境已经支持随机化初始布局。
+
+打开方式：
+
+```python
+config = FakeManipulationConfig(
+    workspace_low=np.array([-1.0, -1.0]),
+    workspace_high=np.array([1.0, 1.0]),
+    randomize_layout=True,
+)
+env = FakeManipulationEnv(config=config, seed=0)
+```
+
+随机化内容：
+
+- 红、蓝、绿 block 会在各自基础位置附近随机扰动。
+- `bowl` 会在基础位置附近随机扰动。
+- 物体之间保持最小距离，避免完全重叠。
+- 所有位置都会裁剪到 workspace 内部。
+
+这一步的意义是从“固定轨迹模仿”推进到“分布内泛化”：
+
+```text
+fixed layout demos -> randomized layout demos -> randomized layout evaluation
+```
+
+如果模型只在固定布局上训练，它很容易记住轨迹；如果在随机化布局上训练和评估，它必须学会根据 observation 调整动作。
 
 ## 当前 Agent
 

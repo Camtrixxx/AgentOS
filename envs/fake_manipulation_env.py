@@ -30,6 +30,10 @@ class FakeManipulationConfig:
     place_radius: float = 0.1
     image_size: int = 128
     include_image: bool = False
+    randomize_layout: bool = False
+    object_position_noise: float = 0.16
+    bowl_position_noise: float = 0.12
+    min_object_distance: float = 0.22
 
 
 class FakeManipulationEnv:
@@ -68,12 +72,7 @@ class FakeManipulationEnv:
         self.held_object = None
         self.step_count = 0
 
-        self.objects = {
-            "red_block": ObjectState("red_block", "red", np.array([-0.55, 0.15], dtype=float)),
-            "blue_block": ObjectState("blue_block", "blue", np.array([0.45, 0.1], dtype=float)),
-            "green_block": ObjectState("green_block", "green", np.array([-0.1, 0.45], dtype=float)),
-        }
-        self.receptacles = {"bowl": np.array([0.55, 0.65], dtype=float)}
+        self.objects, self.receptacles = self._make_layout()
         return self._observation()
 
     def step(self, action: np.ndarray) -> tuple[dict[str, Any], float, bool, dict[str, Any]]:
@@ -102,6 +101,58 @@ class FakeManipulationEnv:
         xy = self.rng.uniform(-self.config.step_size, self.config.step_size, size=2)
         grip = self.rng.choice([-1.0, 1.0], size=1)
         return np.concatenate([xy, grip])
+
+    def _make_layout(self) -> tuple[dict[str, ObjectState], dict[str, np.ndarray]]:
+        base_objects = {
+            "red_block": ("red", np.array([-0.55, 0.15], dtype=float)),
+            "blue_block": ("blue", np.array([0.45, 0.1], dtype=float)),
+            "green_block": ("green", np.array([-0.1, 0.45], dtype=float)),
+        }
+        base_bowl = np.array([0.55, 0.65], dtype=float)
+        if not self.config.randomize_layout:
+            return (
+                {
+                    name: ObjectState(name, color, position.copy())
+                    for name, (color, position) in base_objects.items()
+                },
+                {"bowl": base_bowl.copy()},
+            )
+
+        sampled_positions: dict[str, np.ndarray] = {}
+        for name, (_, base_position) in base_objects.items():
+            sampled_positions[name] = self._sample_near(
+                base_position,
+                self.config.object_position_noise,
+                existing=list(sampled_positions.values()),
+            )
+        objects = {
+            name: ObjectState(name, base_objects[name][0], position)
+            for name, position in sampled_positions.items()
+        }
+        bowl = self._sample_near(base_bowl, self.config.bowl_position_noise, existing=[])
+        return objects, {"bowl": bowl}
+
+    def _sample_near(
+        self,
+        base_position: np.ndarray,
+        noise: float,
+        existing: list[np.ndarray],
+        max_attempts: int = 50,
+    ) -> np.ndarray:
+        for _ in range(max_attempts):
+            candidate = base_position + self.rng.uniform(-noise, noise, size=2)
+            candidate = self._clip_to_workspace(candidate)
+            if all(np.linalg.norm(candidate - other) >= self.config.min_object_distance for other in existing):
+                return candidate
+        return self._clip_to_workspace(base_position)
+
+    def _clip_to_workspace(self, position: np.ndarray) -> np.ndarray:
+        margin = 0.08
+        return np.clip(
+            np.asarray(position, dtype=float),
+            self.config.workspace_low + margin,
+            self.config.workspace_high - margin,
+        )
 
     def render_rgb(self) -> np.ndarray:
         """Render the top-down fake workspace as an RGB uint8 image."""

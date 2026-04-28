@@ -85,6 +85,12 @@ python learning/evaluate_policy.py --policy bc --num-episodes 9
 python scripts/collect_vision_demo.py --num-episodes 60
 ```
 
+采集随机化布局的视觉 demonstrations：
+
+```bash
+python scripts/collect_vision_demo.py --num-episodes 120 --randomize-layout
+```
+
 训练视觉 BC policy：
 
 ```bash
@@ -95,6 +101,12 @@ python learning/train_vision_bc.py --epochs 80
 
 ```bash
 python learning/evaluate_policy.py --policy vision_bc --checkpoint checkpoints/vision_bc_policy.pt
+```
+
+随机化布局评估：
+
+```bash
+python learning/evaluate_policy.py --policy vision_bc --checkpoint checkpoints/vision_bc_policy.pt --randomize-layout --max-steps 100
 ```
 
 记录结果会保存到：

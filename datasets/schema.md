@@ -91,3 +91,9 @@ data/vision_demos/episode_000000/
 ```
 
 Each image file is an RGB `uint8` NumPy array with shape `(128, 128, 3)`. `transitions.jsonl` stores `image_path` and `next_image_path` instead of embedding image arrays directly.
+
+For generalization experiments, collect demonstrations with randomized layouts:
+
+```bash
+python scripts/collect_vision_demo.py --num-episodes 120 --randomize-layout
+```

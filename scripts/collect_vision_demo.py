@@ -20,6 +20,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Collect RGB-image demonstrations in FakeManipulationEnv.")
     parser.add_argument("--num-episodes", type=int, default=9)
     parser.add_argument("--output-dir", default="data/vision_demos")
+    parser.add_argument("--max-steps", type=int, default=100)
+    parser.add_argument("--randomize-layout", action="store_true")
     return parser.parse_args()
 
 
@@ -37,13 +39,14 @@ def main() -> None:
             workspace_low=np.array([-1.0, -1.0], dtype=float),
             workspace_high=np.array([1.0, 1.0], dtype=float),
             include_image=True,
+            randomize_layout=args.randomize_layout,
         )
         env = FakeManipulationEnv(config=config, seed=episode_idx)
         policy = ScriptedPickPlacePolicy()
         recorder = VisionEpisodeRecorder(
             VisionEpisodeRecorderConfig(output_dir=PROJECT_ROOT / args.output_dir)
         )
-        result = AgentLoop(env, policy, recorder=recorder).run_episode(task=task, max_steps=80)
+        result = AgentLoop(env, policy, recorder=recorder).run_episode(task=task, max_steps=args.max_steps)
         successes += int(result.success)
         print(
             f"episode={episode_idx} target={task.target_color} "
@@ -54,4 +57,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

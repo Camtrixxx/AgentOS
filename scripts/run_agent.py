@@ -24,6 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--record", action="store_true", help="Record the rollout under data/demos")
     parser.add_argument("--output-dir", default="data/demos")
     parser.add_argument("--include-image", action="store_true", help="Include rendered RGB images in observations")
+    parser.add_argument("--randomize-layout", action="store_true")
     return parser.parse_args()
 
 
@@ -33,6 +34,7 @@ def main() -> None:
         workspace_low=np.array([-1.0, -1.0], dtype=float),
         workspace_high=np.array([1.0, 1.0], dtype=float),
         include_image=args.include_image,
+        randomize_layout=args.randomize_layout,
     )
     env = FakeManipulationEnv(config=config, seed=0)
     policy = ScriptedPickPlacePolicy()
