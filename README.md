@@ -35,10 +35,42 @@ safe_command [...]
 robot_frame_id 1
 ```
 
+## Run The Embodied Agent Demo
+
+运行一个语言条件 pick-and-place fake 环境：
+
+```bash
+python scripts/run_agent.py
+```
+
+记录一条 episode 数据：
+
+```bash
+python scripts/run_agent.py --record
+```
+
+批量采集 scripted demonstrations：
+
+```bash
+python scripts/collect_demo.py --num-episodes 3
+```
+
+记录结果会保存到：
+
+```text
+data/demos/episode_000000/
+├── metadata.json
+├── transitions.jsonl
+└── arrays.npz
+```
+
 ## Project Layout
 
 ```text
+agent/        language-conditioned policies and rollout loop
 configs/       calibration, robot, safety configs
+datasets/      episode recorder and dataset schema
+envs/          fake embodied manipulation environment
 perception/    stereo triangulation and future keypoint detectors
 retargeting/   human hand/arm pose to robot command mapping
 kinematics/    IK solver adapters
@@ -58,10 +90,11 @@ examples/      runnable demos
 4. Replace `SimpleHandRetargeter` with robot-specific DexRetargeting.
 5. Add Unitree G1 and Inspire Hand backends behind the same interface.
 6. Record demonstrations and train a small policy for replay.
+7. Connect the agent loop to LIBERO, robosuite, ManiSkill, or Isaac Lab.
+8. Add BC / VLA policy adapters and evaluate language-conditioned tasks.
 
 ## Resume Angle
 
 一句话介绍：
 
 > Built an embodied teleoperation pipeline that converts stereo hand observations into safety-constrained robot commands, with modular perception, retargeting, and backend abstractions for simulation and real hardware.
-
