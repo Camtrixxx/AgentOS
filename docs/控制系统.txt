@@ -1,0 +1,53 @@
+帮我分析一下这个机器人系统的目录结构：
+robot_control_framework/
+├── modules/                  # 可复用库模块
+│   ├── communication/        # GPU 零拷贝、通信协议 (ModbusTCP/Serial)
+│   ├── core/                 # 核心工具 (CRC 校验、数据缓冲)
+│   ├── device_control/       # 设备控制 (G1 机器人、Inspire Hand)
+│   └── utils/                # 高级工具 (配置解析、验证)
+│
+├── nodes/                    # ROS2 可执行节点
+│   ├── legacy_control/       # 传统控制节点 (手动控制、演示程序)
+│   │   ├── src/              # inspire_hand_*, unitree_g1_*, full_body_*
+│   │   ├── include/          # robot_runner (备用全身 lowcmd 控制)
+│   │   └── README.md         # 详细节点说明
+│   └── world_model/          # 世界模型节点 (AI 视觉与动作推理)
+│       ├── src/              # vision_dit_node, action_dit_node, gpu_*_test
+│       └── include/          # 节点头文件
+│
+├── idl/                      # IDL 接口定义 (CycloneDDS)
+│   ├── full_body_ctrl.idl    # 全身控制命令
+│   ├── full_body_state.idl   # 全身状态反馈
+│   └── inspire_hand_*.idl    # 灵巧手接口
+│
+├── msg/                      # ROS2 消息定义
+│   ├── GpuTensor.msg         # GPU 零拷贝张量消息
+│   └── CmdPlan.msg           # 轨迹规划命令
+│
+├── config/                   # 配置文件
+│   ├── robot_config.yaml     # 机器人全局配置
+│   ├── motor_config.txt      # 电机 PID 参数 (Kp/Kd)
+│   ├── motion.seq            # 预置运动轨迹
+│   └── twist.csv             # 示例输入格式
+│
+├── planning/                 # 规划算法
+│   └── Any2Track/            # RL 轨迹跟踪模型
+│       ├── models/           # 预训练模型
+│       └── Any2TrackModel.py # 模型推理接口
+│
+├── sim/                      # 仿真与测试脚本
+│   ├── senseauto/            # DDS 类型 Python 绑定
+│   ├── inspire/              # Inspire Hand Python 绑定
+│   ├── realtime_rl_node.py   # 实时 RL 推理节点
+│   └── fake_rl_node.py       # 模拟 RL 输出
+│
+├── test/                     # 测试脚本
+│   └── send_*.py             # DDS 消息发送测试
+│
+├── tools/                    # 辅助工具
+│
+├── CMakeLists.txt            # 顶层构建配置
+├── package.xml               # ROS2 包配置
+└── README.md                 # 本文档
+
+再帮我分析一下这个代码目录架构

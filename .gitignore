@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Env
+.env
+.venv/
+venv/
+conda-meta/
+
+# VS Code
+.vscode/
+
+# Data / outputs / logs
+data/
+datasets/
+outputs/
+runs/
+logs/
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.npy
+*.npz
+
+# System
+.DS_Store

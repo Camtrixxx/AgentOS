@@ -1,0 +1,1514 @@
+解释代码：
+
+import os
+import sys
+from pathlib import Path
+from typing import Optional
+import time
+import cv2
+import numpy as np
+import tyro
+import yaml
+import json
+import socket
+from collections import defaultdict
+from loguru import logger
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from utils.path_utils import get_data_path  # noqa: E402
+
+from modules.DexRetargeting.constants import (  # noqa: E402
+    RobotName,
+    RetargetingType,
+    HandType,
+    get_default_config_path,
+)
+from modules.doubleHandRetargetingClass import DoubleHandRetargeting, Joint3dSmoother  # noqa: E402
+from modules.CameraPose.CameraPoseModel import CameraPoseModel  # noqa: E402
+from modules.PinkIK.pinkik import PinkIK  # noqa: E402
+from modules.CuroboIK.curoboik import CuroboIK
+from modules.geort_meshcat_runner import GeoRTRunner  # noqa: E402
+from modules.RobotControl import RobotControlBridge  # noqa: E402
+from utils.retarget_utils import display_result, draw_keypoints  # noqa: E402
+
+
+class StereoHandTriangulation:
+    """立体视觉手部三角化：使用两个相机的2D关键点进行三角测量"""
+    
+    def __init__(self, 
+                 K_0: np.ndarray,  # 相机0内参 (3, 3)
+                 K_1: np.ndarray,  # 相机1内参 (3, 3)
+                 R_0_to_1: np.ndarray,  # 相机0到相机1的旋转矩阵 (3, 3)
+                 T_0_to_1: np.ndarray,  # 相机0到相机1的平移向量 (3, 1) 或 (3,)
+                 dist_0: Optional[np.ndarray] = None,  # 相机0畸变系数
+                 dist_1: Optional[np.ndarray] = None,  # 相机1畸变系数
+                 ):
+        """
+        Args:
+            K_0: 相机0内参矩阵 (3, 3)
+            K_1: 相机1内参矩阵 (3, 3)
+            R_0_to_1: 相机0到相机1的旋转矩阵 (3, 3)
+            T_0_to_1: 相机0到相机1的平移向量 (3, 1) 或 (3,)
+            dist_0: 相机0畸变系数（可选）
+            dist_1: 相机1畸变系数（可选）
+        """
+        self.K_0 = K_0
+        self.K_1 = K_1
+        self.R_0_to_1 = R_0_to_1
+        # 确保T_0_to_1是列向量 (3, 1)
+        if T_0_to_1.ndim == 1:
+            self.T_0_to_1 = T_0_to_1.reshape(3, 1)
+        elif T_0_to_1.shape == (3, 1):
+            self.T_0_to_1 = T_0_to_1
+        else:
+            self.T_0_to_1 = T_0_to_1.reshape(3, 1)
+        self.dist_0 = dist_0 if dist_0 is not None else np.zeros((1, 5))
+        self.dist_1 = dist_1 if dist_1 is not None else np.zeros((1, 5))
+        
+        # 计算投影矩阵
+        # P_0 = K_0 @ [I | 0]  (相机0的投影矩阵)
+        # P_1 = K_1 @ [R_0_to_1 | T_0_to_1]  (相机1的投影矩阵)
+        self.P_0 = K_0 @ np.hstack([np.eye(3), np.zeros((3, 1))])
+        self.P_1 = K_1 @ np.hstack([R_0_to_1, self.T_0_to_1])
+        
+        # 缓存上一帧的结果
+        self.last_left_joint3d = None
+        self.last_right_joint3d = None
+        # 用于时间平滑：存储上一帧的完整joint3d（包括无效点的填充值）
+        self.last_left_joint3d_full = None
+        self.last_right_joint3d_full = None
+    
+    def triangulate_points(self, 
+                          points_0: np.ndarray,  # 相机0的2D关键点 (N, 2)
+                          points_1: np.ndarray,  # 相机1的2D关键点 (N, 2)
+                          ) -> Optional[np.ndarray]:
+        """
+        使用三角测量计算3D关键点
+        
+        Args:
+            points_0: 相机0的2D关键点 (N, 2)，每行是 [u, v]
+            points_1: 相机1的2D关键点 (N, 2)，每行是 [u, v]
+        
+        Returns:
+            3D关键点 (N, 3) 或 None（如果输入无效）
+        """
+        if points_0 is None or points_1 is None:
+            return None
+        
+        if points_0.shape[0] != points_1.shape[0]:
+            logger.warning(f"两个相机的关键点数量不一致: {points_0.shape[0]} vs {points_1.shape[0]}")
+            return None
+        
+        if points_0.shape[0] == 0:
+            return None
+        
+        # 确保points是 (N, 2) 格式
+        if points_0.ndim == 1:
+            points_0 = points_0.reshape(1, -1)
+        if points_1.ndim == 1:
+            points_1 = points_1.reshape(1, -1)
+        
+        # 使用OpenCV的triangulatePoints进行三角测量
+        # 输入需要是 (2, N) 格式
+        points_0_t = points_0.T.astype(np.float32)  # (2, N)
+        points_1_t = points_1.T.astype(np.float32)  # (2, N)
+        
+        try:
+            # cv2.triangulatePoints需要 (2, N) 格式的输入
+            points_4d = cv2.triangulatePoints(self.P_0, self.P_1, points_0_t, points_1_t)
+            
+            # 转换为齐次坐标，然后归一化
+            points_3d = points_4d[:3] / points_4d[3]  # (3, N)
+            points_3d = points_3d.T  # (N, 3)
+            
+            # 检查是否有无效点（深度为负或过大）
+            valid_mask = (
+                np.isfinite(points_3d[:, 2]) &  # 不是NaN或Inf
+                (points_3d[:, 2] > 0) &  # 深度为正（点在相机前方）
+                (points_3d[:, 2] < 5000.0)  # 深度在合理范围内（0-5000mm = 0-5米）
+            )
+            if not np.all(valid_mask):
+                invalid_count = np.sum(~valid_mask)
+                logger.debug(f"部分关键点三角化结果无效: {invalid_count}/{len(valid_mask)}")
+                
+                # 如果所有点都无效，返回None
+                if invalid_count == len(valid_mask):
+                    return None
+                
+                # 如果大部分点无效（超过50%），返回None
+                if np.sum(valid_mask) < len(valid_mask) * 0.5:
+                    logger.warning(f"超过50%的关键点无效 ({invalid_count}/{len(valid_mask)})，返回None")
+                    return None
+                
+                # 否则用有效点的平均值填充无效点
+                if np.any(valid_mask):
+                    mean_valid = np.mean(points_3d[valid_mask], axis=0)
+                    points_3d[~valid_mask] = mean_valid
+            
+            # 将毫米单位转换为米单位（因为T_0_to_1是毫米，所以三角化结果也是毫米）
+            points_3d = points_3d / 1000.0
+            
+            return points_3d
+            
+        except Exception as e:
+            logger.error(f"三角测量失败: {e}")
+            return None
+    
+    def triangulate_hand(self,
+                        uv_2d_0: Optional[np.ndarray],  # 相机0的2D关键点 (21, 2)
+                        uv_2d_1: Optional[np.ndarray],  # 相机1的2D关键点 (21, 2)
+                        hand_type: str,  # 'left' 或 'right'
+                        ) -> Optional[np.ndarray]:
+        """
+        对一只手进行三角测量
+        
+        Args:
+            uv_2d_0: 相机0的2D关键点 (21, 2) 或 None
+            uv_2d_1: 相机1的2D关键点 (21, 2) 或 None
+            hand_type: 手部类型 ('left' 或 'right')
+        
+        Returns:
+            3D关键点 (21, 3) 或 None
+        """
+        # 如果两个都无效，使用上一帧的值
+        if uv_2d_0 is None and uv_2d_1 is None:
+            if hand_type == 'left' and self.last_left_joint3d is not None:
+                return self.last_left_joint3d.copy()
+            elif hand_type == 'right' and self.last_right_joint3d is not None:
+                return self.last_right_joint3d.copy()
+            return None
+        
+        # 如果只有一个有效，无法进行三角测量，返回None
+        if uv_2d_0 is None or uv_2d_1 is None:
+            return None
+        
+        # 确保是 (21, 2) 格式
+        if uv_2d_0.shape[0] != 21 or uv_2d_1.shape[0] != 21:
+            logger.warning(f"关键点数量不是21: {uv_2d_0.shape[0]} vs {uv_2d_1.shape[0]}")
+            return None
+        
+        # 进行三角测量
+        joint3d = self.triangulate_points(uv_2d_0, uv_2d_1)
+        
+        # 如果三角化成功，对无效点进行时间平滑优化
+        if joint3d is not None:
+            # 检查是否有无效点（NaN或Inf）
+            valid_mask = np.isfinite(joint3d).all(axis=1)
+            if not np.all(valid_mask):
+                # 获取上一帧的数据用于时间平滑
+                last_joint3d_full = None
+                if hand_type == 'left' and self.last_left_joint3d_full is not None:
+                    last_joint3d_full = self.last_left_joint3d_full
+                elif hand_type == 'right' and self.last_right_joint3d_full is not None:
+                    last_joint3d_full = self.last_right_joint3d_full
+                
+                # 对无效点进行填充：优先使用上一帧的值，否则使用有效点的平均值
+                invalid_indices = np.where(~valid_mask)[0]
+                for idx in invalid_indices:
+                    if last_joint3d_full is not None and idx < len(last_joint3d_full):
+                        # 使用上一帧对应关键点的值（时间平滑）
+                        joint3d[idx] = last_joint3d_full[idx]
+                    else:
+                        # 使用有效点的平均值（空间平滑）
+                        mean_valid = np.mean(joint3d[valid_mask], axis=0)
+                        joint3d[idx] = mean_valid
+        
+        # 更新缓存
+        if joint3d is not None:
+            if hand_type == 'left':
+                self.last_left_joint3d = joint3d.copy()
+                self.last_left_joint3d_full = joint3d.copy()  # 存储完整数据用于时间平滑
+            else:
+                self.last_right_joint3d = joint3d.copy()
+                self.last_right_joint3d_full = joint3d.copy()  # 存储完整数据用于时间平滑
+        
+        return joint3d
+
+
+class PerformanceProfiler:
+    """性能分析器：收集和报告各环节的耗时"""
+    
+    def __init__(self):
+        self.timings = defaultdict(list)
+        self.counts = defaultdict(int)
+        self.frame_id = 0
+        # 用于 start_timer/end_timer 的计时
+        # 使用线程ID作为key的一部分，避免多线程冲突
+        self.active_timers = {}  # {(thread_id, timer_name): start_time}
+        # 线程锁（用于多线程环境下的线程安全）
+        import threading
+        self._lock = threading.Lock()
+        # 线程本地存储，用于记录当前线程的ID
+        self._thread_local = threading.local()
+        
+    def record_time(self, category: str, operation: str, elapsed: float):
+        """记录耗时"""
+        key = f"{category}.{operation}" if operation else category
+        self.timings[key].append(elapsed)
+        self.counts[key] += 1
+    
+    def start_timer(self, timer_name: str):
+        """开始计时（用于细粒度计时）"""
+        import threading
+        thread_id = threading.get_ident()
+        timer_key = (thread_id, timer_name)
+        with self._lock:
+            self.active_timers[timer_key] = time.time()
+    
+    def end_timer(self, timer_name: str):
+        """结束计时并记录（用于细粒度计时）"""
+        import threading
+        thread_id = threading.get_ident()
+        timer_key = (thread_id, timer_name)
+        
+        with self._lock:
+            if timer_key in self.active_timers:
+                elapsed = time.time() - self.active_timers[timer_key]
+                del self.active_timers[timer_key]
+            else:
+                # Timer 未配对，可能是跨线程问题或其他原因，记录警告但不影响运行
+                logger.debug(f"警告: timer '{timer_name}' (thread {thread_id}) 未找到对应的 start_timer，可能已过期或跨线程问题")
+                return
+        
+        # 在锁外进行耗时记录（避免长时间持有锁）
+        # 自动解析 timer_name 来分类
+        # 例如: "hand_detection_wholebody_detect" -> category="hand_detection", operation="wholebody_detect"
+        #      "hand_detection_handmesh_inference_first_hand0" -> category="hand_detection", operation="handmesh_inference_first_hand0"
+        #      "handmesh_onnx_inference" -> category="handmesh", operation="onnx_inference"
+        if timer_name.startswith("hand_detection_"):
+            operation = timer_name.replace("hand_detection_", "")
+            self.record_time("hand_detection", operation, elapsed)
+        elif timer_name.startswith("wholebody_"):
+            operation = timer_name.replace("wholebody_", "")
+            self.record_time("wholebody", operation, elapsed)
+        elif timer_name.startswith("handattr_"):
+            operation = timer_name.replace("handattr_", "")
+            self.record_time("handattr", operation, elapsed)
+        elif timer_name.startswith("handmesh_"):
+            operation = timer_name.replace("handmesh_", "")
+            self.record_time("handmesh", operation, elapsed)
+        elif timer_name.startswith("camera_pose_"):
+            operation = timer_name.replace("camera_pose_", "")
+            self.record_time("camera_pose", operation, elapsed)
+        elif timer_name.startswith("retargeting_"):
+            operation = timer_name.replace("retargeting_", "")
+            self.record_time("retargeting", operation, elapsed)
+        else:
+            # 默认作为独立类别
+            self.record_time(timer_name, "", elapsed)
+        
+    def print_stats(self, frame_id: int, interval: int = 30):
+        """每 interval 帧打印一次统计信息"""
+        if frame_id % interval == 0 and frame_id > 0:
+            logger.info("=" * 80)
+            logger.info(f"性能统计 (帧 {frame_id}):")
+            logger.info("-" * 80)
+            
+            # 按类别分组显示
+            categories = {}
+            for key, times in self.timings.items():
+                if len(times) > 0:
+                    parts = key.split('.')
+                    if len(parts) == 2:
+                        cat, op = parts
+                        if cat not in categories:
+                            categories[cat] = {}
+                        categories[cat][op] = {
+                            'mean': np.mean(times),
+                            'max': np.max(times),
+                            'min': np.min(times),
+                            'count': len(times)
+                        }
+                    else:
+                        if key not in categories:
+                            categories[key] = {}
+                        categories[key][''] = {
+                            'mean': np.mean(times),
+                            'max': np.max(times),
+                            'min': np.min(times),
+                            'count': len(times)
+                        }
+            
+            # 打印统计（按类别分组，每个类别内按操作名排序）
+            for cat in sorted(categories.keys()):
+                # 为某些类别添加说明
+                cat_label = cat
+                if cat == "geort_computation":
+                    cat_label = f"{cat} (GeoRT手指重定向)"
+                elif cat == "retargeting":
+                    cat_label = f"{cat} (Rule-based重定向，仅用于计算手腕旋转，不使用其手指结果)"
+                
+                logger.info(f"  [{cat_label}]")
+                ops = categories[cat]
+                # 优先显示 total，然后按字母顺序显示其他操作
+                if '' in ops:
+                    stats = ops['']
+                    logger.info(f"    {'total':30s}: "
+                              f"mean={stats['mean']*1000:6.2f}ms, "
+                              f"max={stats['max']*1000:6.2f}ms, "
+                              f"min={stats['min']*1000:6.2f}ms, "
+                              f"count={stats['count']}")
+                # 显示其他操作（排除 total）
+                for op in sorted([k for k in ops.keys() if k != '']):
+                    stats = ops[op]
+                    logger.info(f"    {op:30s}: "
+                              f"mean={stats['mean']*1000:6.2f}ms, "
+                              f"max={stats['max']*1000:6.2f}ms, "
+                              f"min={stats['min']*1000:6.2f}ms, "
+                              f"count={stats['count']}")
+            
+            logger.info("=" * 80)
+    
+    def reset(self):
+        """重置统计"""
+        self.timings.clear()
+        self.counts.clear()
+        self.frame_id = 0
+
+
+class JointSmoother:
+    """关节值平滑滤波器：智能平滑，只在突变时平滑，正常变化时快速响应"""
+    
+    def __init__(self, alpha: float = 0.2, max_change: float = 0.15, jump_threshold: float = 0.3):
+        """
+        Args:
+            alpha: 平滑系数 (0-1)，只在检测到突变时使用，默认0.2（快速响应）
+            max_change: 每帧最大变化量（弧度），超过此值会被限制，默认0.15（约8.6度/帧）
+            jump_threshold: 突变检测阈值（弧度），超过此值认为是突变，默认0.3（约17度）
+        """
+        self.alpha = alpha
+        self.max_change = max_change
+        self.jump_threshold = jump_threshold
+        self.smoothed_pose = None
+        self.smoothed_hand = None
+    
+    def smooth(self, pose_set: list, hand_set: list) -> tuple:
+        """
+        智能平滑关节值：只在检测到突变时平滑，正常变化时快速响应
+        
+        Args:
+            pose_set: 29个身体关节角度
+            hand_set: 12个手部关节值（0-1000）
+        
+        Returns:
+            (smoothed_pose_set, smoothed_hand_set)
+        """
+        pose_set = np.array(pose_set, dtype=float)
+        hand_set = np.array(hand_set, dtype=float)
+        
+        # 初始化
+        if self.smoothed_pose is None:
+            self.smoothed_pose = pose_set.copy()
+            self.smoothed_hand = hand_set.copy()
+            return pose_set.tolist(), hand_set.tolist()
+        
+        # 计算变化量
+        pose_diff = pose_set - self.smoothed_pose
+        hand_diff = hand_set - self.smoothed_hand
+        
+        # 检测是否有突变（任何关节变化超过阈值）
+        max_pose_change = np.max(np.abs(pose_diff))
+        max_hand_change = np.max(np.abs(hand_diff))
+        hand_jump_threshold = 200  # 手部突变阈值（0-1000范围）
+        
+        has_jump = (max_pose_change > self.jump_threshold) or (max_hand_change > hand_jump_threshold)
+        
+        if has_jump:
+            # 检测到突变：限制变化量并应用平滑
+            pose_change = np.clip(pose_diff, -self.max_change, self.max_change)
+            pose_target = self.smoothed_pose + pose_change
+            
+            hand_max_change = 100  # 手部每帧最多变化100（0-1000范围）
+            hand_change = np.clip(hand_diff, -hand_max_change, hand_max_change)
+            hand_target = self.smoothed_hand + hand_change
+            
+            # 应用平滑（使用较小的alpha，快速响应）
+            self.smoothed_pose = self.alpha * self.smoothed_pose + (1 - self.alpha) * pose_target
+            self.smoothed_hand = self.alpha * self.smoothed_hand + (1 - self.alpha) * hand_target
+        else:
+            # 正常变化：快速响应，只做轻微平滑避免噪声
+            # 使用更大的权重给新值，快速响应
+            fast_alpha = 0.1  # 快速响应系数
+            self.smoothed_pose = fast_alpha * self.smoothed_pose + (1 - fast_alpha) * pose_set
+            self.smoothed_hand = fast_alpha * self.smoothed_hand + (1 - fast_alpha) * hand_set
+        
+        return self.smoothed_pose.tolist(), self.smoothed_hand.tolist()
+    
+    def reset(self):
+        """重置平滑器状态"""
+        self.smoothed_pose = None
+        self.smoothed_hand = None
+
+
+class RobotCommandSender:
+    """通过 TCP Socket 发送机器人控制命令"""
+    
+    def __init__(self, host: str, port: int = 8888):
+        self.host = host
+        self.port = port
+        self.socket = None
+        self.connected = False
+    
+    def connect(self):
+        """连接到机器人端"""
+        try:
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.socket.settimeout(1.0)
+            self.socket.connect((self.host, self.port))
+            self.connected = True
+            logger.info(f"✓ 已连接到机器人端 {self.host}:{self.port}")
+            return True
+        except Exception as e:
+            logger.error(f"✗ 连接机器人端失败: {e}")
+            self.connected = False
+            return False
+    
+    def send_command(self, pose_set: list, hand_set: list, pose_mode: int = 0, hand_mode: int = 1) -> bool:
+        """发送控制命令"""
+        if not self.connected or self.socket is None:
+            # 尝试重连
+            if not self.connect():
+                return False
+        
+        try:
+            # 构建 JSON 消息
+            payload = {
+                "pose_set": [float(x) for x in pose_set],
+                "hand_set": [int(x) for x in hand_set],
+                "pose_mode": int(pose_mode),
+                "hand_mode": int(hand_mode),
+            }
+            
+            # 发送消息（使用换行符分隔）
+            message = json.dumps(payload) + "\n"
+            self.socket.sendall(message.encode('utf-8'))
+            return True
+        except Exception as e:
+            logger.error(f"发送命令失败: {e}")
+            self.connected = False
+            if self.socket:
+                try:
+                    self.socket.close()
+                except:
+                    pass
+                self.socket = None
+            return False
+    
+    def close(self):
+        """关闭连接"""
+        if self.socket:
+            try:
+                self.socket.close()
+            except:
+                pass
+            self.socket = None
+        self.connected = False
+
+
+def compute_wrist_rotation_for_pinkik(
+    joint3d: np.ndarray,
+    hand_type: str = 'left',
+    retargeting=None
+) -> np.ndarray:
+    """
+    计算手腕旋转矩阵，对齐到 PinkIK 期望的坐标系
+    
+    使用与 show_retarget_pinkik_meshcat_only_2camera_time_0106.py 相同的方法：
+    1. 使用 estimate_wrist_rotation 从关键点计算旋转（operator frame）
+    2. 应用 OPERATOR2MANO 变换对齐到 MANO 坐标系
+    3. 如果需要，应用 root2wrist 变换（因为 PinkIK 期望的是 robot root 的位姿，不是手腕位姿）
+    4. 转换为欧拉角
+    
+    Args:
+        joint3d: 21x3 关键点数组
+        hand_type: 'left' 或 'right'
+        retargeting: SeqRetargeting 实例（可选，如果提供则应用 root2wrist 变换）
+    
+    Returns:
+        euler: 欧拉角 [rx, ry, rz] (XYZ顺序，弧度)
+    """
+    from utils.retarget_utils import estimate_wrist_rotation
+    from modules.DexRetargeting.constants import HandType, OPERATOR2MANO
+    from pytransform3d import rotations
+    
+    assert joint3d.shape == (21, 3), f"joint3d 形状应为 (21, 3)，实际为 {joint3d.shape}"
+    
+    # 1. 使用 estimate_wrist_rotation 计算手腕旋转（operator frame）
+    wrist_info = estimate_wrist_rotation(joint3d, handedness=hand_type.capitalize())
+    wrist_quat = wrist_info['quat']  # (w, x, y, z)
+    wrist_pos = joint3d[0, :]
+    
+    # 2. 转换为旋转矩阵
+    R_operator = rotations.matrix_from_quaternion(wrist_quat)
+    
+    # 3. 应用 OPERATOR2MANO 变换（对齐到 MANO 坐标系）
+    hand_type_enum = HandType.left if hand_type == 'left' else HandType.right
+    operator2mano = OPERATOR2MANO[hand_type_enum]
+    R_mano = R_operator @ operator2mano
+    
+    # 4. 构建目标手腕位姿
+    target_wrist_pose = np.eye(4)
+    target_wrist_pose[:3, :3] = R_mano
+    target_wrist_pose[:3, 3] = wrist_pos
+    
+    # 5. 如果需要，应用 root2wrist 变换（因为参考脚本传给 PinkIK 的是 robot root 的位姿）
+    if retargeting is not None:
+        try:
+            robot = retargeting.optimizer.robot
+            name_list = [
+                "dummy_x_translation_joint",
+                "dummy_y_translation_joint",
+                "dummy_z_translation_joint",
+                "dummy_x_rotation_joint",
+                "dummy_y_rotation_joint",
+                "dummy_z_rotation_joint",
+            ]
+            wrist_link_id = robot.get_joint_parent_child_frames(name_list[5])[1]
+            
+            # 设置 dummy joints 为 0，计算 root2wrist
+            old_qpos = robot.q0
+            new_qpos = old_qpos.copy()
+            for num, joint_name in enumerate(retargeting.optimizer.target_joint_names):
+                if joint_name in name_list:
+                    new_qpos[num] = 0
+            
+            robot.compute_forward_kinematics(new_qpos)
+            root2wrist = robot.get_link_pose_inv(wrist_link_id)
+            
+            # 计算 robot root 的目标位姿
+            target_root_pose = target_wrist_pose @ root2wrist
+            
+            # 提取欧拉角
+            euler = rotations.euler_from_matrix(
+                target_root_pose[:3, :3], 0, 1, 2, extrinsic=False
+            )
+            
+            # 修正 x 轴方向（两只手的 x 方向和世界坐标系的 x 方向是反的）
+            R_x_flip = np.array([
+                [1, 0, 0],
+                [0, -1, 0],
+                [0, 0, -1]
+            ])
+            R_corrected = target_root_pose[:3, :3] @ R_x_flip
+            
+            # 右手需要额外的掌心方向修正（绕 z 轴旋转 180 度）
+            if hand_type == 'right':
+                R_z_flip = np.array([
+                    [-1, 0, 0],
+                    [0, -1, 0],
+                    [0, 0, 1]
+                ])
+                R_corrected = R_corrected @ R_z_flip
+            
+            euler = rotations.euler_from_matrix(R_corrected, 0, 1, 2, extrinsic=False)
+            
+            return euler
+        except Exception as e:
+            logger.debug(f"应用 root2wrist 变换失败，使用直接方法: {e}")
+    
+    # 6. 如果没有 retargeting，直接使用 MANO 坐标系的欧拉角
+    # 同样需要修正 x 轴方向
+    R_x_flip = np.array([
+        [1, 0, 0],
+        [0, -1, 0],
+        [0, 0, -1]
+    ])
+    R_corrected = R_mano @ R_x_flip
+    
+    # 右手需要额外的掌心方向修正（绕 z 轴旋转 180 度）
+    if hand_type == 'right':
+        R_z_flip = np.array([
+            [-1, 0, 0],
+            [0, -1, 0],
+            [0, 0, 1]
+        ])
+        R_corrected = R_corrected @ R_z_flip
+    
+    euler = rotations.euler_from_matrix(R_corrected, 0, 1, 2, extrinsic=False)
+    
+    return euler
+
+
+def _expand_6dof_to_12dof(qpos_6dof: np.ndarray) -> np.ndarray:
+    """
+    将 GeoRT 输出的 6 自由度手指参数扩展为 12 个具体关节角。
+    q6 = [thumb_yaw, thumb_pitch, index_prox, middle_prox, ring_prox, pinky_prox]
+    q12 顺序对应 inspire 手 URDF 中的物理关节：
+      0: thumb_proximal_yaw
+      1: thumb_proximal_pitch
+      2: thumb_intermediate      = 1.334 * thumb_pitch
+      3: thumb_distal            = 0.667 * thumb_pitch
+      4: index_proximal
+      5: index_intermediate      = 1.06399 * index_prox  - 0.04545
+      6: middle_proximal
+      7: middle_intermediate     = 1.06399 * middle_prox - 0.04545
+      8: ring_proximal
+      9: ring_intermediate       = 1.06399 * ring_prox   - 0.04545
+      10: pinky_proximal
+      11: pinky_intermediate     = 1.06399 * pinky_prox  - 0.04545
+    """
+    qpos_6dof = np.asarray(qpos_6dof, dtype=float).reshape(-1)
+    if qpos_6dof.shape[0] < 6:
+        raise ValueError(f"GeoRT qpos 长度不足 6: got {qpos_6dof.shape[0]}")
+
+    qpos_12dof = np.zeros(12, dtype=float)
+
+    # Thumb (4)
+    qpos_12dof[0] = qpos_6dof[0]  # yaw
+    qpos_12dof[1] = qpos_6dof[1]  # pitch
+    qpos_12dof[2] = 1.334 * qpos_6dof[1]
+    qpos_12dof[3] = 0.667 * qpos_6dof[1]
+
+    # Index (2)
+    qpos_12dof[4] = qpos_6dof[2]
+    qpos_12dof[5] = 1.06399 * qpos_6dof[2] - 0.04545
+
+    # Middle (2)
+    qpos_12dof[6] = qpos_6dof[3]
+    qpos_12dof[7] = 1.06399 * qpos_6dof[3] - 0.04545
+
+    # Ring (2)
+    qpos_12dof[8] = qpos_6dof[4]
+    qpos_12dof[9] = 1.06399 * qpos_6dof[4] - 0.04545
+
+    # Pinky (2)
+    qpos_12dof[10] = qpos_6dof[5]
+    qpos_12dof[11] = 1.06399 * qpos_6dof[5] - 0.04545
+
+    return qpos_12dof
+
+
+def start_geort_pinkik_meshcat_only_2camera(
+    cfg_file: Optional[str],
+    camera_index_0: int = 0,  # 主相机（用于CameraPose）
+    camera_index_1: int = 4,  # 辅助相机
+    show_camera: bool = False,
+    robot_interface: str = "eth0",
+    enable_robot_control: bool = False,
+    transition_steps: int = 300,  # 渐进式过渡步数（默认300帧，约10秒）
+    max_joint_speed: float = 0.01,  # 每帧最大关节角度变化（弧度，默认0.01约0.57度）
+    robot_host: Optional[str] = None,  # 机器人端 IP 地址（如果使用 TCP Socket 方式）
+    robot_port: int = 8888,  # 机器人端端口（如果使用 TCP Socket 方式）
+    smooth_alpha: float = 0.2,  # 平滑系数（0-1，只在突变时使用，默认0.2快速响应）
+    smooth_max_change: float = 0.15,  # 每帧最大变化量（弧度，默认0.15约8.6度）
+    smooth_jump_threshold: float = 0.3,  # 突变检测阈值（弧度，默认0.3约17度）
+    hand: str = "double",  # 控制发送哪只手的数据: "left", "right", "double"
+    thumb_pitch_gain: float = 1.5,  # 大拇指 pitch 灵敏度放大系数
+    stereo_calib_file: Optional[str] = None,  # 立体标定文件路径（YAML格式）
+    use_triangulation: bool = True,  # 是否使用三角测量（True）或简单融合（False）
+):
+    """
+    主循环：使用双相机 + DoubleHandRetargeting + CameraPose + PinkIK + GeoRT，
+    仅通过 PinkIK 的 Meshcat 显示整机（g1_29dof_rev_1_0_with_inspire_hand_new.urdf）。
+    """
+    # 1. 加载统一配置文件
+    if cfg_file is None:
+        cfg_file_path = PROJECT_ROOT / "data" / "configs" / "cfg_geort_pinkik.yaml"
+    else:
+        cfg_file_path = Path(cfg_file).resolve()
+
+    with open(cfg_file_path, "r", encoding="utf-8") as f:
+        cfg_data = yaml.safe_load(f)
+
+    # 从统一配置文件中读取各个模块的配置
+    camera_pose_cfg = cfg_data["models"]["CameraPose"]
+    curoboik_model_cfg = cfg_data["models"]["CuroboIK"]
+    # pinkik_model_cfg = cfg_data["models"]["PinkIK"]
+    geort_model_cfg = cfg_data.get("models", {}).get("GeoRT")
+    
+    # if pinkik_model_cfg is None:
+    #     raise ValueError("配置文件中缺少 models.PinkIK 字段")
+    if geort_model_cfg is None:
+        raise ValueError("配置文件中缺少 models.GeoRT 字段")
+    if curoboik_model_cfg is None:
+        raise ValueError("配置文件中缺少 models.CuroboIK 字段")
+
+    # iksolver = PinkIK(pinkik_model_cfg)
+    iksolver = CuroboIK(curoboik_model_cfg)
+    # 2. DoubleHandRetargeting（与原 PinkIK demo 一致）
+    robot_name = RobotName.inspire
+    retargeting_type = RetargetingType.mixdexpilot
+    hand_type = HandType.double
+    config_path = get_default_config_path(robot_name, retargeting_type, hand_type)
+    if not isinstance(config_path, tuple) or len(config_path) != 2:
+        raise ValueError("仅支持双手配置，请检查 hand_type 和 retargeting_type")
+    left_config_path, right_config_path = config_path
+
+    robot_dir = PROJECT_ROOT / "data" / "robots" / "hands"
+    
+    # 初始化Joint3dSmoother（用于平滑三角化后的joint3d，避免抖动）
+    joint3d_smoother = Joint3dSmoother(
+        jump_threshold=0.10,  # 整体跳变阈值（米），默认 0.10m (10cm)
+        smooth_alpha=0.5,  # 检测到异常时的平滑系数，默认 0.5（中等平滑）
+    )
+    
+    # 创建两个 DoubleHandRetargeting 实例，分别用于两个相机
+    retargeting_0 = DoubleHandRetargeting(
+        robot_dir=str(robot_dir),
+        robot_name=str(robot_name),
+        left_config_path=str(left_config_path),
+        right_config_path=str(right_config_path),
+        camera_path=None,  # 双相机版本不使用视频文件
+        cfg_file=str(cfg_file_path),
+        joint3d_smoother=joint3d_smoother,  # 添加平滑器
+    )
+    retargeting_1 = DoubleHandRetargeting(
+        robot_dir=str(robot_dir),
+        robot_name=str(robot_name),
+        left_config_path=str(left_config_path),
+        right_config_path=str(right_config_path),
+        camera_path=None,  # 双相机版本不使用视频文件
+        cfg_file=str(cfg_file_path),
+        joint3d_smoother=joint3d_smoother,  # 添加平滑器
+    )
+    
+    # 创建两个 CameraPoseModel 实例
+    campose_0 = CameraPoseModel(camera_pose_cfg, None)
+    campose_1 = CameraPoseModel(camera_pose_cfg, None)
+
+    # 3. GeoRT 配置（从统一配置文件中读取）
+
+    from modules.DexRetargeting.constants import (  # noqa: E402
+        get_default_config_path as get_geo_config_path,
+    )
+
+    geo_left_cfg, geo_right_cfg = get_geo_config_path(
+        RobotName.inspire, RetargetingType.mixdexpilot, HandType.double
+    )
+
+    # 直接使用 GeoRTModel，而不是 GeoRTRunner，避免重复手部检测
+    # 因为手部检测已经在 retargeting.run(image) 中完成了
+    from modules.GeoRT.geort_model import GeoRTModel
+    geort_model = GeoRTModel(
+        model_path=geort_model_cfg.get("onnx_path"),
+        smoothing_alpha=geort_model_cfg.get("smoothing_alpha", 0.6),
+        max_delta_deg=geort_model_cfg.get("max_delta_deg", 12.0),
+        max_hold_time=geort_model_cfg.get("max_hold_time", 0.2),
+    )
+
+    # 3.5. 初始化机器人控制和平滑滤波器
+    robot_bridge = None
+    robot_sender = None
+    joint_smoother = None
+    
+    if enable_robot_control:
+        # 初始化平滑滤波器（智能平滑：只在突变时平滑，正常变化时快速响应）
+        joint_smoother = JointSmoother(
+            alpha=smooth_alpha, 
+            max_change=smooth_max_change,
+            jump_threshold=smooth_jump_threshold
+        )
+        logger.info(f"✓ 关节平滑滤波器已初始化 (alpha={smooth_alpha}, max_change={smooth_max_change}, jump_threshold={smooth_jump_threshold})")
+    
+    if enable_robot_control:
+        if robot_host is not None:
+            # 使用 TCP Socket 方式（跨机通信）
+            logger.info(f"使用 TCP Socket 方式连接到机器人端: {robot_host}:{robot_port}")
+            robot_sender = RobotCommandSender(host=robot_host, port=robot_port)
+            if robot_sender.connect():
+                logger.info("✓ TCP Socket 连接成功")
+            else:
+                logger.warning("⚠ TCP Socket 连接失败，将尝试重连")
+        else:
+            # 使用本地 DDS 方式（同机通信）
+            logger.info(f"使用本地 DDS 方式，网卡: {robot_interface}")
+            robot_bridge = RobotControlBridge(
+                robot_interface=robot_interface,
+                enable=True,
+                transition_steps=transition_steps,
+                max_joint_speed=max_joint_speed,
+                hand=hand,
+                thumb_pitch_gain=thumb_pitch_gain,
+            )
+            if not robot_bridge.enable:
+                logger.warning("机器人控制未启用，将仅进行可视化")
+
+    # 4. 初始化立体视觉三角化
+    stereo_triangulation = None
+    if use_triangulation:
+        # 从配置中读取期望的图像尺寸
+        expected_width = int(camera_pose_cfg.get("frame_width", 1920))
+        expected_height = int(camera_pose_cfg.get("frame_height", 1080))
+        
+        # 先尝试加载已有的标定文件
+        calib_loaded = False
+        if stereo_calib_file is None:
+            stereo_calib_file = PROJECT_ROOT / "data" / "videos" / "stereo_calib.yaml"
+        
+        if Path(stereo_calib_file).exists():
+            try:
+                with open(stereo_calib_file, 'r', encoding='utf-8') as f:
+                    stereo_calib = yaml.safe_load(f)
+                
+                # 读取相机内参
+                if 'K_0' in stereo_calib and 'K_1' in stereo_calib:
+                    K_0 = np.array(stereo_calib['K_0'])
+                    K_1 = np.array(stereo_calib['K_1'])
+                elif 'K_l' in stereo_calib and 'K_r' in stereo_calib:
+                    K_0 = np.array(stereo_calib['K_l'])
+                    K_1 = np.array(stereo_calib['K_r'])
+                else:
+                    raise ValueError("未找到K_0/K_1或K_l/K_r")
+                
+                # 检查分辨率是否匹配，如果不匹配则缩放内参
+                calib_width = stereo_calib.get('frame_width', None)
+                calib_height = stereo_calib.get('frame_height', None)
+                
+                if calib_width is not None and calib_height is not None:
+                    if calib_width != expected_width or calib_height != expected_height:
+                        # 分辨率不匹配，需要缩放内参
+                        scale_x = expected_width / calib_width
+                        scale_y = expected_height / calib_height
+                        logger.warning(
+                            f"分辨率不匹配！标定分辨率: {calib_width}x{calib_height}, "
+                            f"运行分辨率: {expected_width}x{expected_height}, "
+                            f"正在自动缩放内参矩阵..."
+                        )
+                        K_0 = K_0.copy()
+                        K_1 = K_1.copy()
+                        K_0[0, 0] *= scale_x  # fx
+                        K_0[1, 1] *= scale_y  # fy
+                        K_0[0, 2] *= scale_x  # cx
+                        K_0[1, 2] *= scale_y  # cy
+                        K_1[0, 0] *= scale_x  # fx
+                        K_1[1, 1] *= scale_y  # fy
+                        K_1[0, 2] *= scale_x  # cx
+                        K_1[1, 2] *= scale_y  # cy
+                
+                # 读取外参
+                if 'R_0_to_1' in stereo_calib and 'T_0_to_1' in stereo_calib:
+                    R_0_to_1 = np.array(stereo_calib['R_0_to_1'], dtype=np.float32)
+                    T_0_to_1 = np.array(stereo_calib['T_0_to_1'], dtype=np.float32)
+                elif 'R_l_to_r' in stereo_calib and 'T_l_to_r' in stereo_calib:
+                    R_0_to_1 = np.array(stereo_calib['R_l_to_r'], dtype=np.float32)
+                    T_0_to_1 = np.array(stereo_calib['T_l_to_r'], dtype=np.float32)
+                else:
+                    raise ValueError("未找到R_0_to_1/T_0_to_1或R_l_to_r/T_l_to_r")
+                
+                # 读取畸变系数
+                dist_0 = None
+                dist_1 = None
+                if 'dist_0' in stereo_calib:
+                    dist_0 = np.array(stereo_calib['dist_0'])
+                elif 'dist_l' in stereo_calib:
+                    dist_0 = np.array(stereo_calib['dist_l'])
+                
+                if 'dist_1' in stereo_calib:
+                    dist_1 = np.array(stereo_calib['dist_1'])
+                elif 'dist_r' in stereo_calib:
+                    dist_1 = np.array(stereo_calib['dist_r'])
+                
+                stereo_triangulation = StereoHandTriangulation(
+                    K_0=K_0, K_1=K_1, R_0_to_1=R_0_to_1, T_0_to_1=T_0_to_1,
+                    dist_0=dist_0, dist_1=dist_1,
+                )
+                logger.info("✓ 从文件加载立体标定参数成功")
+                baseline_mm = np.linalg.norm(T_0_to_1)
+                logger.info(f"  基线长度: {baseline_mm:.1f} mm ({baseline_mm/10:.1f} cm)")
+                calib_loaded = True
+            except Exception as e:
+                import traceback
+                logger.warning(f"加载立体标定文件失败: {e}")
+                logger.debug(f"详细错误信息: {traceback.format_exc()}")
+        
+        # 如果标定文件不存在或加载失败，提示用户
+        if not calib_loaded:
+            logger.warning("=" * 70)
+            logger.warning("立体标定文件不存在或加载失败！")
+            logger.warning("=" * 70)
+            logger.warning("请先运行标定脚本进行标定：")
+            logger.warning("")
+            logger.warning("  python example/stereo_calibrate.py \\")
+            logger.warning(f"    --camera_index_0 {camera_index_0} \\")
+            logger.warning(f"    --camera_index_1 {camera_index_1} \\")
+            logger.warning(f"    --cfg_file {cfg_file} \\")
+            logger.warning(f"    --output_file {stereo_calib_file} \\")
+            logger.warning("    --min_images 15")
+            logger.warning("")
+            logger.warning("标定完成后，将使用简单融合方法（效果较差）")
+            use_triangulation = False
+    
+    if not use_triangulation:
+        logger.warning("未使用三角测量，将使用简单融合方法（效果较差）")
+    
+    # 5. 打开两个相机
+    expected_width = int(camera_pose_cfg.get("frame_width", 1920))
+    expected_height = int(camera_pose_cfg.get("frame_height", 1080))
+    
+    logger.info(f"打开相机 {camera_index_0} 和 {camera_index_1}")
+    cap_0 = cv2.VideoCapture(camera_index_0)
+    cap_1 = cv2.VideoCapture(camera_index_1)
+    
+    # 设置相机分辨率
+    cap_0.set(cv2.CAP_PROP_FRAME_WIDTH, expected_width)
+    cap_0.set(cv2.CAP_PROP_FRAME_HEIGHT, expected_height)
+    cap_1.set(cv2.CAP_PROP_FRAME_WIDTH, expected_width)
+    cap_1.set(cv2.CAP_PROP_FRAME_HEIGHT, expected_height)
+    
+    if not cap_0.isOpened():
+        raise RuntimeError(f"无法打开相机 {camera_index_0}")
+    if not cap_1.isOpened():
+        raise RuntimeError(f"无法打开相机 {camera_index_1}")
+    
+    logger.info(f"✓ 两个相机都已成功打开")
+
+    frame_id = 0
+    last_T_c2w = None
+    # 缓存上一帧的有效结果，用于检测失败时的 fallback
+    last_valid_qpos_dic = {}
+    last_valid_left_key_q = {}
+    last_valid_right_key_q = {}
+    last_valid_resq_list = None
+    # 机器人控制相关：标记是否已发送第一条命令
+    first_robot_command_sent = False
+    # 可视化相关：缓存检测结果用于绘制
+    last_hand_bboxes = None
+    last_uv_2d_list = None
+    last_undist_2d_list = None
+    last_track_mesh3d_list = None
+    last_track_hand_type_list = None
+    last_track_cam_param_list = None
+
+    # 初始化性能分析器
+    profiler = PerformanceProfiler()
+
+    logger.info("开始 GeoRT 手指 + PinkIK 手臂 + Meshcat 整机演示，按 'q' 退出")
+    if (robot_bridge is not None and robot_bridge.enable) or (robot_sender is not None and robot_sender.connected):
+        logger.warning("⚠️  机器人控制已启用！将在检测到有效数据后发送控制命令")
+
+    while cap_0.isOpened() and cap_1.isOpened():
+        frame_start = time.time()
+        frame_id += 1
+        
+        # 0) 读取两个相机图像
+        camera_read_start = time.time()
+        success_0, image_0 = cap_0.read()
+        success_1, image_1 = cap_1.read()
+        profiler.record_time("camera_read", "", time.time() - camera_read_start)
+        
+        if not success_0 or not success_1:
+            logger.warning(f"帧 {frame_id}: 读取图像失败")
+            continue
+
+        # 1) CameraPose：棋盘标定（使用主相机0）
+        camera_pose_start = time.time()
+        try:
+            cam_pose_inference_start = time.time()
+            objpoints, imgpoints, imgSize = campose_0.run_inference(image_0)
+            profiler.record_time("camera_pose", "inference", time.time() - cam_pose_inference_start)
+            
+            cam_pose_postprocess_start = time.time()
+            ret, rvec, tvec = campose_0.postprocess(objpoints, imgpoints, None)
+            profiler.record_time("camera_pose", "postprocess", time.time() - cam_pose_postprocess_start)
+            
+            if rvec is None or tvec is None or rvec.size == 0 or tvec.size == 0:
+                raise ValueError("CameraPose 返回空的 rvec/tvec")
+            
+            cam_pose_transform_start = time.time()
+            T = np.eye(4)
+            T[:3, :3] = cv2.Rodrigues(rvec)[0]
+            T[:3, 3] = tvec.reshape(-1)
+            T_c2w = np.linalg.inv(T)
+            last_T_c2w = T_c2w.copy()
+            homo = np.concatenate(
+                [objpoints[0] / 1000.0, np.ones((objpoints[0].shape[0], 1))],
+                axis=-1,
+            )
+            profiler.record_time("camera_pose", "transform", time.time() - cam_pose_transform_start)
+        except Exception as e:
+            if last_T_c2w is not None:
+                T_c2w = last_T_c2w
+                logger.debug(f"棋盘标定失败，复用上一帧外参: {e}")
+            else:
+                T_c2w = np.eye(4)
+                logger.debug(f"棋盘标定失败，使用单位外参 T_c2w=I: {e}")
+            homo = None
+        finally:
+            profiler.record_time("camera_pose", "total", time.time() - camera_pose_start)
+
+        if homo is not None:
+            iksolver.visualChessboard(homo)
+
+        # 2) DoubleHandRetargeting：对两个相机分别运行检测
+        hand_detection_start = time.time()
+        left_joint3d_0 = None
+        right_joint3d_0 = None
+        left_joint3d_1 = None
+        right_joint3d_1 = None
+        undist_2d_list_0 = None
+        undist_2d_list_1 = None
+        track_hand_type_list_0 = None
+        track_hand_type_list_1 = None
+        
+        # 并行化两个相机的检测
+        from concurrent.futures import ThreadPoolExecutor
+        
+        def detect_camera_0():
+            try:
+                # skip_optimizer=True: 跳过 rule-based retargeting 优化器执行，只获取 joint3d
+                # 但仍然保留 retargeting 对象用于计算 root2wrist 变换
+                return retargeting_0.run(image_0, profiler=profiler, skip_optimizer=True)
+            except Exception as e:
+                logger.debug(f"帧 {frame_id}: 相机0检测失败: {e}")
+                return None
+        
+        def detect_camera_1():
+            try:
+                # skip_optimizer=True: 跳过 rule-based retargeting 优化器执行，只获取 joint3d
+                return retargeting_1.run(image_1, profiler=profiler, skip_optimizer=True)
+            except Exception as e:
+                logger.debug(f"帧 {frame_id}: 相机1检测失败: {e}")
+                return None
+        
+        # 并行执行两个相机的检测
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            future_0 = executor.submit(detect_camera_0)
+            future_1 = executor.submit(detect_camera_1)
+            
+            result_0 = future_0.result()
+            result_1 = future_1.result()
+        
+        # 解析结果
+        if result_0 is not None:
+            (
+                _, _, _, _,
+                _, _, undist_2d_list_0,
+                _, track_hand_type_list_0, _,
+                left_joint3d_0, right_joint3d_0, _, _,
+            ) = result_0
+        
+        if result_1 is not None:
+            (
+                _, _, _, _,
+                _, _, undist_2d_list_1,
+                _, track_hand_type_list_1, _,
+                left_joint3d_1, right_joint3d_1, _, _,
+            ) = result_1
+        
+        profiler.record_time("hand_detection", "total", time.time() - hand_detection_start)
+        
+        # 3) 使用立体视觉三角化或简单融合
+        triangulation_start = time.time()
+        left_joint3d_fused = None
+        right_joint3d_fused = None
+        
+        if use_triangulation and stereo_triangulation is not None:
+            # 提取左手和右手的2D关键点
+            left_uv_2d_0 = None
+            right_uv_2d_0 = None
+            left_uv_2d_1 = None
+            right_uv_2d_1 = None
+            
+            if undist_2d_list_0 is not None and len(undist_2d_list_0) > 0:
+                for i, hand_type_detected in enumerate(track_hand_type_list_0 if track_hand_type_list_0 else []):
+                    if hand_type_detected == 'left' and left_uv_2d_0 is None:
+                        left_uv_2d_0 = undist_2d_list_0[i] if i < len(undist_2d_list_0) else None
+                    elif hand_type_detected == 'right' and right_uv_2d_0 is None:
+                        right_uv_2d_0 = undist_2d_list_0[i] if i < len(undist_2d_list_0) else None
+            
+            if undist_2d_list_1 is not None and len(undist_2d_list_1) > 0:
+                for i, hand_type_detected in enumerate(track_hand_type_list_1 if track_hand_type_list_1 else []):
+                    if hand_type_detected == 'left' and left_uv_2d_1 is None:
+                        left_uv_2d_1 = undist_2d_list_1[i] if i < len(undist_2d_list_1) else None
+                    elif hand_type_detected == 'right' and right_uv_2d_1 is None:
+                        right_uv_2d_1 = undist_2d_list_1[i] if i < len(undist_2d_list_1) else None
+            
+            # 进行三角测量
+            if left_uv_2d_0 is not None and left_uv_2d_1 is not None:
+                left_joint3d_fused = stereo_triangulation.triangulate_hand(left_uv_2d_0, left_uv_2d_1, 'left')
+            
+            if right_uv_2d_0 is not None and right_uv_2d_1 is not None:
+                right_joint3d_fused = stereo_triangulation.triangulate_hand(right_uv_2d_0, right_uv_2d_1, 'right')
+            
+            # 如果三角测量失败，fallback到单相机检测结果
+            # 注意：必须优先使用相机0的结果（与T_c2w坐标系一致）
+            # 三角化结果在相机0坐标系下，如果失败应该fallback到相机0的结果
+            if left_joint3d_fused is None:
+                # 优先使用相机0（与T_c2w坐标系一致）
+                left_joint3d_fused = left_joint3d_0 if left_joint3d_0 is not None else left_joint3d_1
+                if left_joint3d_fused is left_joint3d_1 and frame_id % 30 == 0:
+                    logger.warning(f"帧 {frame_id}: 左手三角化失败且相机0无结果，使用相机1（坐标系可能不匹配）")
+            if right_joint3d_fused is None:
+                # 优先使用相机0（与T_c2w坐标系一致）
+                right_joint3d_fused = right_joint3d_0 if right_joint3d_0 is not None else right_joint3d_1
+                if right_joint3d_fused is right_joint3d_1 and frame_id % 30 == 0:
+                    logger.warning(f"帧 {frame_id}: 右手三角化失败且相机0无结果，使用相机1（坐标系可能不匹配）")
+        else:
+            # 简单融合（fallback）：优先使用相机0的结果
+            if left_joint3d_0 is not None:
+                left_joint3d_fused = left_joint3d_0
+            elif left_joint3d_1 is not None:
+                left_joint3d_fused = left_joint3d_1
+            else:
+                left_joint3d_fused = None
+            
+            if right_joint3d_0 is not None:
+                right_joint3d_fused = right_joint3d_0
+            elif right_joint3d_1 is not None:
+                right_joint3d_fused = right_joint3d_1
+            else:
+                right_joint3d_fused = None
+        
+        profiler.record_time("triangulation", "total", time.time() - triangulation_start)
+        
+        # 对融合后的 joint3d 进行平滑处理（避免抖动）
+        # 注意：即使三角化结果在相机0坐标系下，也需要平滑处理
+        if left_joint3d_fused is not None and left_joint3d_fused.shape == (21, 3):
+            left_joint3d_fused = joint3d_smoother.smooth(left_joint3d_fused, 'left')
+        if right_joint3d_fused is not None and right_joint3d_fused.shape == (21, 3):
+            right_joint3d_fused = joint3d_smoother.smooth(right_joint3d_fused, 'right')
+        
+        # 使用融合后的 joint3d
+        left_joint3d = left_joint3d_fused
+        right_joint3d = right_joint3d_fused
+
+        # 3) GeoRT：基于已检测的 joint3d 计算手指关节（与双相机版本一致，避免重复检测）
+        geort_start = time.time()
+        geort_left_qpos = None
+        geort_right_qpos = None
+        
+        # 左手
+        if left_joint3d is not None and left_joint3d.shape == (21, 3):
+            left_geort_start = time.time()
+            try:
+                geort_left_qpos, _, _ = geort_model.run(left_joint3d, 'left')
+                profiler.record_time("geort_computation", "left_fingers", time.time() - left_geort_start)
+            except Exception as e:
+                logger.debug(f"帧 {frame_id}: 左手 GeoRT 计算失败: {e}")
+        
+        # 右手
+        if right_joint3d is not None and right_joint3d.shape == (21, 3):
+            right_geort_start = time.time()
+            try:
+                geort_right_qpos, _, _ = geort_model.run(right_joint3d, 'right')
+                profiler.record_time("geort_computation", "right_fingers", time.time() - right_geort_start)
+            except Exception as e:
+                logger.debug(f"帧 {frame_id}: 右手 GeoRT 计算失败: {e}")
+        
+        # 对齐双目版本：geort_computation.total
+        profiler.record_time("geort_computation", "total", time.time() - geort_start)
+
+        # 4) 计算手腕 R 和 t（对齐到 PinkIK 坐标系，与参考脚本一致）
+        wrist_calc_start = time.time()
+        qpos_dic = {}
+        
+        # 左手
+        if left_joint3d is not None and left_joint3d.shape == (21, 3):
+            try:
+                left_wrist_start = time.time()
+                # t: 直接使用手腕位置（与参考脚本一致）
+                t_left = left_joint3d[0, :].copy()
+                
+                # R: 使用 estimate_wrist_rotation + OPERATOR2MANO + root2wrist（与参考脚本一致）
+                euler_left = compute_wrist_rotation_for_pinkik(
+                    left_joint3d, 
+                    'left',
+                    retargeting=retargeting_0.left_retargeting if retargeting_0 else None
+                )
+                
+                # 组合为 6DoF [x, y, z, rx, ry, rz]
+                qpos_dic["left"] = np.concatenate([t_left, euler_left])
+                # 对齐双目版本：geort_computation.left_wrist_extract
+                profiler.record_time("geort_computation", "left_wrist_extract", time.time() - left_wrist_start)
+            except Exception as e:
+                logger.debug(f"帧 {frame_id}: 计算左手 R 和 t 失败: {e}")
+        
+        # 右手
+        if right_joint3d is not None and right_joint3d.shape == (21, 3):
+            try:
+                right_wrist_start = time.time()
+                # t: 直接使用手腕位置（与参考脚本一致）
+                t_right = right_joint3d[0, :].copy()
+                
+                # R: 使用 estimate_wrist_rotation + OPERATOR2MANO + root2wrist（与参考脚本一致）
+                euler_right = compute_wrist_rotation_for_pinkik(
+                    right_joint3d, 
+                    'right',
+                    retargeting=retargeting_0.right_retargeting if retargeting_0 else None
+                )
+                
+                # 组合为 6DoF [x, y, z, rx, ry, rz]
+                qpos_dic["right"] = np.concatenate([t_right, euler_right])
+                # 对齐双目版本：geort_computation.right_wrist_extract
+                profiler.record_time("geort_computation", "right_wrist_extract", time.time() - right_wrist_start)
+            except Exception as e:
+                logger.debug(f"帧 {frame_id}: 计算右手 R 和 t 失败: {e}")
+        
+        # 对齐双目版本：geort_computation.total
+        profiler.record_time("geort_computation", "total", time.time() - wrist_calc_start)
+        
+        # 记录总帧时间（对齐双目版本：frame_total）
+        profiler.record_time("frame_total", "", time.time() - frame_start)
+        
+        # 打印性能统计（每30帧）
+        profiler.print_stats(frame_id, interval=30)
+        
+        # 如果当前帧检测失败，使用上一帧的有效结果
+        if not qpos_dic and last_valid_qpos_dic:
+            qpos_dic = last_valid_qpos_dic.copy()
+            logger.debug(f"帧 {frame_id}: 手部检测失败，使用上一帧的手腕位置")
+        elif qpos_dic:
+            # 更新缓存
+            last_valid_qpos_dic = qpos_dic.copy()
+            
+            # 调试输出（每30帧打印一次）
+            if frame_id % 30 == 0:
+                for side in ["left", "right"]:
+                    if side in qpos_dic:
+                        q = qpos_dic[side]
+                        logger.info(f"帧 {frame_id}, {side}手: pos={q[:3]}, euler_XYZ={q[3:6]}")
+
+        # 5) 手指关节：GeoRT 优先，fallback 到原 retargeting
+        # 对齐双目版本：finger_prep.total
+        finger_mapping_start = time.time()
+        left_key_q = {}
+        right_key_q = {}
+
+        # 左手 fingers
+        if geort_left_qpos is not None:
+            try:
+                # GeoRT 返回的 qpos 已经是 12 维（在 GeoRTModel.run_inference 中已展开）
+                # GeoRT 的 12 维顺序：[thumb_yaw, thumb_pitch, thumb_intermediate, thumb_distal,
+                #                     index_proximal, index_intermediate,
+                #                     middle_proximal, middle_intermediate,
+                #                     ring_proximal, ring_intermediate,
+                #                     pinky_proximal, pinky_intermediate]
+                q12_l = np.asarray(geort_left_qpos, dtype=float).reshape(-1)
+                if q12_l.shape[0] == 6:
+                    # 如果意外收到 6 维，才展开
+                    q12_l = _expand_6dof_to_12dof(q12_l)
+                elif q12_l.shape[0] != 12:
+                    raise ValueError(f"GeoRT 左手 qpos 维度异常: {q12_l.shape[0]}")
+                
+                # lefthandkey 顺序（新 URDF）：[index_proximal, index_intermediate, middle_proximal, middle_intermediate, 
+                #                              pinky_proximal, pinky_intermediate, ring_proximal, ring_intermediate,
+                #                              thumb_proximal_yaw, thumb_proximal_pitch, thumb_intermediate, thumb_distal]
+                # 需要按 lefthandkey 的顺序重新排列 GeoRT 的 12 维
+                geort_to_lefthandkey = [
+                    4,   # left_index_proximal_joint        <- GeoRT[4] (index_proximal)
+                    5,   # left_index_intermediate_joint     <- GeoRT[5] (index_intermediate)
+                    6,   # left_middle_proximal_joint        <- GeoRT[6] (middle_proximal)
+                    7,   # left_middle_intermediate_joint    <- GeoRT[7] (middle_intermediate)
+                    10,  # left_pinky_proximal_joint         <- GeoRT[10] (pinky_proximal)
+                    11,  # left_pinky_intermediate_joint     <- GeoRT[11] (pinky_intermediate)
+                    8,   # left_ring_proximal_joint           <- GeoRT[8] (ring_proximal)
+                    9,   # left_ring_intermediate_joint      <- GeoRT[9] (ring_intermediate)
+                    0,   # left_thumb_proximal_yaw_joint      <- GeoRT[0] (thumb_proximal_yaw)
+                    1,   # left_thumb_proximal_pitch_joint   <- GeoRT[1] (thumb_proximal_pitch)
+                    2,   # left_thumb_intermediate_joint     <- GeoRT[2] (thumb_intermediate)
+                    3,   # left_thumb_distal_joint           <- GeoRT[3] (thumb_distal)
+                ]
+                for i, name in enumerate(iksolver.lefthandkey):
+                    left_key_q[name] = float(q12_l[geort_to_lefthandkey[i]])
+            except Exception as e:
+                logger.warning(f"左手 GeoRT 手指映射失败: {e}")
+
+        # 右手 fingers
+        if geort_right_qpos is not None:
+            try:
+                # GeoRT 返回的 qpos 已经是 12 维（在 GeoRTModel.run_inference 中已展开）
+                q12_r = np.asarray(geort_right_qpos, dtype=float).reshape(-1)
+                if q12_r.shape[0] == 6:
+                    # 如果意外收到 6 维，才展开
+                    q12_r = _expand_6dof_to_12dof(q12_r)
+                elif q12_r.shape[0] != 12:
+                    raise ValueError(f"GeoRT 右手 qpos 维度异常: {q12_r.shape[0]}")
+                
+                # righthandkey 顺序（新 URDF）：[index_proximal, index_intermediate, middle_proximal, middle_intermediate,
+                #                               pinky_proximal, pinky_intermediate, ring_proximal, ring_intermediate,
+                #                               thumb_proximal_yaw, thumb_proximal_pitch, thumb_intermediate, thumb_distal]
+                # 需要按 righthandkey 的顺序重新排列 GeoRT 的 12 维
+                geort_to_righthandkey = [
+                    4,   # right_index_proximal_joint        <- GeoRT[4] (index_proximal)
+                    5,   # right_index_intermediate_joint     <- GeoRT[5] (index_intermediate)
+                    6,   # right_middle_proximal_joint        <- GeoRT[6] (middle_proximal)
+                    7,   # right_middle_intermediate_joint    <- GeoRT[7] (middle_intermediate)
+                    10,  # right_pinky_proximal_joint         <- GeoRT[10] (pinky_proximal)
+                    11,  # right_pinky_intermediate_joint     <- GeoRT[11] (pinky_intermediate)
+                    8,   # right_ring_proximal_joint          <- GeoRT[8] (ring_proximal)
+                    9,   # right_ring_intermediate_joint      <- GeoRT[9] (ring_intermediate)
+                    0,   # right_thumb_proximal_yaw_joint     <- GeoRT[0] (thumb_proximal_yaw)
+                    1,   # right_thumb_proximal_pitch_joint   <- GeoRT[1] (thumb_proximal_pitch)
+                    2,   # right_thumb_intermediate_joint     <- GeoRT[2] (thumb_intermediate)
+                    3,   # right_thumb_distal_joint           <- GeoRT[3] (thumb_distal)
+                ]
+                for i, name in enumerate(iksolver.righthandkey):
+                    right_key_q[name] = float(q12_r[geort_to_righthandkey[i]])
+            except Exception as e:
+                logger.warning(f"右手 GeoRT 手指映射失败: {e}")
+        
+        # 如果手指检测失败，使用上一帧的手指结果
+        if not left_key_q and last_valid_left_key_q:
+            left_key_q = last_valid_left_key_q.copy()
+            logger.debug(f"帧 {frame_id}: 左手手指检测失败，使用上一帧结果")
+        if not right_key_q and last_valid_right_key_q:
+            right_key_q = last_valid_right_key_q.copy()
+            logger.debug(f"帧 {frame_id}: 右手手指检测失败，使用上一帧结果")
+        
+        profiler.record_time("finger_prep", "total", time.time() - finger_mapping_start)
+
+        # 6) PinkIK：求解整机 IK，并在 Meshcat 显示
+        ik_solve_start = time.time()
+        if frame_id > 70:
+            if qpos_dic:
+                try:
+                    # PinkIK 的 preprocess 在 run_inference 内部调用
+                    ik_inference_start = time.time()
+                    resq_dic = iksolver.run_inference(qpos_dic, T_c2w)
+                    # 对齐双目版本：ik_solve.run_inference
+                    profiler.record_time("ik_solve", "run_inference", time.time() - ik_inference_start)
+                except Exception as e:
+                    logger.error(f"PinkIK 运行失败: {e}")
+                    # 使用上一帧的结果
+                    if last_valid_resq_list is not None:
+                        iksolver.viewerShow(last_valid_resq_list)
+                    profiler.record_time("ik_solve", "total", time.time() - ik_solve_start)
+                    continue
+
+                ik_build_start = time.time()
+                resq_list = []
+                for key in iksolver.q_idx_joint_list:
+                    if key in left_key_q:
+                        resq_list.append(left_key_q[key])
+                    elif key in right_key_q:
+                        resq_list.append(right_key_q[key])
+                    elif key in resq_dic:
+                        resq_list.append(resq_dic[key])
+                    else:
+                        resq_list.append(0.0)
+                # 对齐双目版本：ik_solve.build_resq_list
+                profiler.record_time("ik_solve", "build_resq_list", time.time() - ik_build_start)
+
+                # 更新缓存
+                last_valid_resq_list = resq_list.copy()
+                last_valid_left_key_q = left_key_q.copy()
+                last_valid_right_key_q = right_key_q.copy()
+                
+                ik_vis_start = time.time()
+                iksolver.viewerShow(resq_list)
+                profiler.record_time("ik_solve", "visualization", time.time() - ik_vis_start)
+                profiler.record_time("ik_solve", "total", time.time() - ik_solve_start)
+                # 注意：当前仅做耗时测试，不发送真实机器人命令
+            else:
+                # 完全没有检测到手，使用上一帧的完整结果
+                if last_valid_resq_list is not None:
+                    # 使用上一帧的手指和手臂位置
+                    iksolver.viewerShow(last_valid_resq_list)
+                    logger.debug(f"帧 {frame_id}: 无手部检测，保持上一帧姿态")
+                else:
+                    logger.debug(f"帧 {frame_id}: 无手部检测且无历史数据，跳过显示")
+
+        # 可选：显示摄像头/视频画面，方便调试
+        display_start = time.time()
+        if show_camera:
+            # 绘制handmesh检测结果（使用主相机0的图像）
+            display_image = image_0.copy()
+            
+            # 更新可视化缓存（使用相机0的结果）
+            if undist_2d_list_0 is not None:
+                last_undist_2d_list = undist_2d_list_0
+            if track_hand_type_list_0 is not None:
+                last_track_hand_type_list = track_hand_type_list_0
+            
+            # 绘制手部边界框
+            if last_hand_bboxes is not None:
+                for bbox in last_hand_bboxes:
+                    cv2.rectangle(display_image, 
+                                 (int(bbox[0]), int(bbox[1])), 
+                                 (int(bbox[2]), int(bbox[3])), 
+                                 (0, 255, 0), 2)
+            
+            # 绘制关键点
+            if last_undist_2d_list is not None:
+                for undist_2d in last_undist_2d_list:
+                    if undist_2d is not None and len(undist_2d) > 0:
+                        display_image = draw_keypoints(
+                            display_image, 
+                            undist_2d, 
+                            radius=3, 
+                            color=(0, 0, 255), 
+                            thickness=-1
+                        )
+            
+            # 显示检测状态
+            if left_joint3d is not None:
+                cv2.putText(display_image, "Left Hand: Detected", (10, 30),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            else:
+                cv2.putText(display_image, "Left Hand: Not Detected", (10, 30),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            
+            if right_joint3d is not None:
+                cv2.putText(display_image, "Right Hand: Detected", (10, 60),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            else:
+                cv2.putText(display_image, "Right Hand: Not Detected", (10, 60),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            
+            # 显示帧号
+            cv2.putText(display_image, f"Frame: {frame_id}", (10, display_image.shape[0] - 20),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+            
+            cv2.imshow("Input Camera", display_image)
+        
+        # 对齐双目版本：display.total
+        profiler.record_time("display", "total", time.time() - display_start)
+
+        if cv2.waitKey(1) & 0xFF == ord("q"):
+            break
+
+    cap_0.release()
+    cap_1.release()
+    # DoubleHandRetargeting 不需要 stop() 方法
+    cv2.destroyAllWindows()
+    
+    # 关闭 TCP Socket 连接
+    if robot_sender is not None:
+        robot_sender.close()
+    
+    logger.info("GeoRT + PinkIK Meshcat-only 双相机示例结束")
+
+
+def main(
+    cfg_file: Optional[str] = None,
+    camera_index_0: int = 0,  # 主相机
+    camera_index_1: int = 4,  # 辅助相机
+    show_camera: bool = False,
+    robot_interface: str = "eth0",
+    enable_robot_control: bool = False,
+    transition_steps: int = 300,
+    max_joint_speed: float = 0.01,
+    robot_host: Optional[str] = None,  # 机器人端 IP 地址（如果使用 TCP Socket 方式）
+    robot_port: int = 8888,  # 机器人端端口（如果使用 TCP Socket 方式）
+    smooth_alpha: float = 0.2,  # 平滑系数（0-1，只在突变时使用，默认0.2快速响应）
+    smooth_max_change: float = 0.15,  # 每帧最大变化量（弧度，默认0.15约8.6度）
+    smooth_jump_threshold: float = 0.3,  # 突变检测阈值（弧度，默认0.3约17度）
+    hand: str = "double",  # 控制发送哪只手的数据: "left", "right", "double"
+    stereo_calib_file: Optional[str] = None,  # 立体标定文件路径
+    use_triangulation: bool = True,  # 是否使用三角测量
+):
+    start_geort_pinkik_meshcat_only_2camera(
+        cfg_file=cfg_file,
+        camera_index_0=camera_index_0,
+        camera_index_1=camera_index_1,
+        show_camera=show_camera,
+        robot_interface=robot_interface,
+        enable_robot_control=enable_robot_control,
+        transition_steps=transition_steps,
+        max_joint_speed=max_joint_speed,
+        robot_host=robot_host,
+        robot_port=robot_port,
+        smooth_alpha=smooth_alpha,
+        smooth_max_change=smooth_max_change,
+        smooth_jump_threshold=smooth_jump_threshold,
+        hand=hand,
+        stereo_calib_file=stereo_calib_file,
+        use_triangulation=use_triangulation,
+    )
+
+
+if __name__ == "__main__":
+    tyro.cli(main)

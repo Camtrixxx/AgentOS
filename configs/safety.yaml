@@ -1,0 +1,6 @@
+safety:
+  joint_lower: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  joint_upper: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+  max_delta_per_step: 0.08
+  command_timeout_s: 0.5
+

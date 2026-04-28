@@ -1,0 +1,748 @@
+代码分析：
+import os
+os.environ['RMW_IMPLEMENTATION'] = 'rmw_cyclonedds_cpp'
+os.environ['ROS_DOMAIN_ID'] = '0' 
+os.environ['MUJOCO_GL'] = 'osmesa'
+# export CYCLONEDDS_URI='<CycloneDDS><Domain><General><Interfaces><NetworkInterface name="eth0" priority="default" multicast="default" /></Interfaces></General></Domain></CycloneDDS>'
+import rclpy
+from rclpy.node import Node
+from rclpy import executors
+from sensor_msgs.msg import JointState
+import math
+import numpy as num_resets_per_eval
+import threading
+import time
+
+# 不在主进程初始化 CycloneDDS；通过子进程运行 unitree_dds_runner.py 来隔离 DDS
+import subprocess
+import socket
+import json
+import sys
+import threading
+import time
+
+# runner 路径与 TCP 参数
+UNITREE_RUNNER = os.path.join(os.path.dirname(__file__), "unitree_dds_runner.py")
+DDS_HOST = "127.0.0.1"
+DDS_PORT = 6000
+
+# 全局子进程/客户端句柄
+DDS_PROC = None
+DDS_CLIENT = None
+
+def start_unitree_dds_runner(timeout=5.0):
+    global DDS_PROC, DDS_CLIENT
+    if DDS_PROC is not None:
+        return DDS_PROC, DDS_CLIENT
+    # 启动 runner 子进程（stdout 合并到主进程，便于调试）
+    DDS_PROC = subprocess.Popen([sys.executable, UNITREE_RUNNER], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    # 非阻塞地打印子进程输出线程（便于调试）
+    def _drain_stdout(pipe):
+        try:
+            for line in pipe:
+                print("[unitree_runner]", line.rstrip())
+        except Exception:
+            pass
+    threading.Thread(target=_drain_stdout, args=(DDS_PROC.stdout,), daemon=True).start()
+
+    # 尝试连接 runner 的 TCP 服务
+    start = time.time()
+    client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    while True:
+        try:
+            client.connect((DDS_HOST, DDS_PORT))
+            client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            DDS_CLIENT = client
+            print("info: connected to unitree_dds_runner tcp server")
+            return DDS_PROC, DDS_CLIENT
+        except Exception:
+            if time.time() - start > timeout:
+                # 若不能连接，停止子进程并抛异常
+                try:
+                    DDS_PROC.terminate()
+                except Exception:
+                    pass
+                DDS_PROC = None
+                client.close()
+                raise RuntimeError("failed to connect to unitree_dds_runner tcp server")
+            time.sleep(0.1)
+
+def stop_unitree_runner():
+    global DDS_PROC, DDS_CLIENT
+    try:
+        if DDS_CLIENT:
+            DDS_CLIENT.close()
+    except Exception:
+        pass
+    try:
+        if DDS_PROC:
+            DDS_PROC.terminate()
+            DDS_PROC.wait(timeout=2)
+    except Exception:
+        try:
+            DDS_PROC.kill()
+        except Exception:
+            pass
+    DDS_PROC = None
+    DDS_CLIENT = None
+
+
+import sys
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", "planning", "Any2Track"))
+from pathlib import Path
+import numpy as np
+np.set_printoptions(precision=4, suppress=True)
+
+# rl node
+from Any2TrackModel import init_model, init_traj
+from traj_class import Trajectory, TrajectoryData
+import g1_tracking_constants as consts
+# signal receiver
+from joint_receiver import SignalReceiver
+
+class PublishSignal:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.value = np.array([
+            -1.0,  # "frame_id",
+            # root joint
+            0.0,  # "root_joint_x",
+            0.0,  # "root_joint_y",
+            0.8,  # "root_joint_z",
+            # root joint quat
+            0.0,  # "root_joint_quat_x",
+            0.0,  # "root_joint_quat_y",
+            0.0,  # "root_joint_quat_z",
+            1.0,  # "root_joint_quat_w",
+            # left leg
+            -0.1,  # "left_hip_pitch_joint",
+            0.0,  # "left_hip_roll_joint",
+            0.0,  # "left_hip_yaw_joint",
+            0.3,  # "left_knee_joint",
+            -0.2,  # "left_ankle_pitch_joint",
+            0.0,  # "left_ankle_roll_joint",
+            # right leg
+            -0.1,  # "right_hip_pitch_joint",
+            0.0,  # "right_hip_roll_joint",
+            0.0,  # "right_hip_yaw_joint",
+            0.3,  # "right_knee_joint",
+            -0.2,  # "right_ankle_pitch_joint",
+            0.0,  # "right_ankle_roll_joint",
+            # waist
+            0.0,  # "waist_yaw_joint",
+            0.0,  # "waist_roll_joint",
+            0.0,  # "waist_pitch_joint",
+            # left arm
+            0.2,  # "left_shoulder_pitch_joint",
+            0.3,  # "left_shoulder_roll_joint",
+            0.0,  # "left_shoulder_yaw_joint",
+            1.28,  # "left_elbow_joint",
+            0.0,  # "left_wrist_roll_joint",
+            0.0,  # "left_wrist_pitch_joint",
+            0.0,  # "left_wrist_yaw_joint",
+            # left hand
+            0.0,  # "left_index_1_joint",
+            0.0,  # "left_index_2_joint",
+            0.0,  # "left_little_1_joint",
+            0.0,  # "left_little_2_joint",
+            0.0,  # "left_middle_1_joint",
+            0.0,  # "left_middle_2_joint",
+            0.0,  # "left_ring_1_joint",
+            0.0,  # "left_ring_2_joint",
+            0.0,  # "left_thumb_1_joint",
+            0.0,  # "left_thumb_2_joint",
+            0.0,  # "left_thumb_3_joint",
+            0.0,  # "left_thumb_4_joint",
+            # right arm
+            0.2,  # "right_shoulder_pitch_joint",
+            -0.3,  # "right_shoulder_roll_joint",
+            0.0,  # "right_shoulder_yaw_joint",
+            1.28,  # "right_elbow_joint",
+            0.0,  # "right_wrist_roll_joint",
+            0.0,  # "right_wrist_pitch_joint",
+            0.0,  # "right_wrist_yaw_joint",
+            # right hand
+            0.0,  # "right_index_1_joint",
+            0.0,  # "right_index_2_joint",
+            0.0,  # "right_little_1_joint",
+            0.0,  # "right_little_2_joint",
+            0.0,  # "right_middle_1_joint",
+            0.0,  # "right_middle_2_joint",
+            0.0,  # "right_ring_1_joint",
+            0.0,  # "right_ring_2_joint",
+            0.0,  # "right_thumb_1_joint",
+            0.0,  # "right_thumb_2_joint",
+            0.0,  # "right_thumb_3_joint",
+            0.0,  # "right_thumb_4_joint",
+        ])
+
+    def set(self, v: np.ndarray):
+        with self.lock:
+            self.value = v
+
+    def get(self) -> np.ndarray:
+        with self.lock:
+            return self.value
+
+
+class ReceiveSignal:
+    """接收信号状态，用于在 receiver 和 rl_updater 之间传递接收到的信号数据"""
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.signals = {}  # 存储所有接收到的信号数据
+        self.signal_timestamps = {}  # 存储每个信号的更新时间戳
+
+    def set_signal(self, signal_name: str, signal_data: dict):
+        """设置信号数据"""
+        with self.lock:
+            self.signals[signal_name] = signal_data
+            self.signal_timestamps[signal_name] = time.time()
+
+    def set_signals(self, signals: dict):
+        """批量设置多个信号数据"""
+        with self.lock:
+            current_time = time.time()
+            for signal_name, signal_data in signals.items():
+                self.signals[signal_name] = signal_data
+                self.signal_timestamps[signal_name] = current_time
+
+    def get_signal(self, signal_name: str, timeout: float = 5.0):
+        """
+        获取指定信号数据（带超时检查）
+
+        Args:
+            signal_name: 信号名称
+            timeout: 超时时间（秒）
+
+        Returns:
+            dict: 信号数据，如果超时或不存在则返回 None
+        """
+        with self.lock:
+            if signal_name not in self.signals:
+                return None
+
+            timestamp = self.signal_timestamps.get(signal_name, 0)
+            data_age = time.time() - timestamp
+
+            if data_age > timeout:
+                return None
+
+            return self.signals[signal_name].copy() if isinstance(self.signals[signal_name], dict) else self.signals[signal_name]
+
+    def get_all_signals(self, timeout: float = 5.0):
+        """
+        获取所有信号数据（带超时检查）
+
+        Args:
+            timeout: 超时时间（秒）
+
+        Returns:
+            dict: 所有未超时的信号数据
+        """
+        with self.lock:
+            result = {}
+            current_time = time.time()
+
+            for signal_name, signal_data in self.signals.items():
+                timestamp = self.signal_timestamps.get(signal_name, 0)
+                data_age = current_time - timestamp
+
+                if data_age <= timeout:
+                    result[signal_name] = signal_data.copy() if isinstance(signal_data, dict) else {"data": signal_data}
+                    result[signal_name]["timestamp"] = timestamp
+
+            return result
+
+    def has_signal(self, signal_name: str, timeout: float = 5.0):
+        """检查信号是否存在且未超时"""
+        with self.lock:
+            if signal_name not in self.signals:
+                return False
+
+            timestamp = self.signal_timestamps.get(signal_name, 0)
+            data_age = time.time() - timestamp
+
+            return data_age <= timeout
+
+
+def publish_cmds(frame_data: np.ndarray, frame_idx: int, sim_joint_limits, pub):
+    pose_start_idx = 8
+    valid_hand_idx = [2, 6, 4, 0, 9, 8]
+    left_hand_start_idx = 30
+    right_hand_start_idx = 49
+    hand_dof = 6 * 2
+
+    hand_angles = [frame_data[left_hand_start_idx + idx] for idx in valid_hand_idx ] + \
+        [frame_data[right_hand_start_idx + idx] for idx in valid_hand_idx ]
+    
+    hand_values = []
+    for i, angle in enumerate(hand_angles):
+        real_value = 1000 * (1 - angle / sim_joint_limits[i])
+        # 确保数值在0-1000范围内
+        real_value = max(0, min(1000, real_value))
+        hand_values.append(int(real_value)) 
+    hand_set = hand_values
+    # print(f"hand_set: {hand_set}, time:{time.time()}")
+
+    pose_set = frame_data[pose_start_idx:left_hand_start_idx] + \
+        frame_data[left_hand_start_idx + hand_dof : right_hand_start_idx]
+    if frame_idx % 100 == 0:
+        print(f"[{frame_idx}]pub: hand_set: {hand_set}, pose_set: {pose_set}")
+
+    hand_mode = 0b0001
+    pose_mode = 0b0000
+    # 如果主进程内有本地 dds pub（不建议），直接写；否则通过 TCP 发送到 runner
+    if pub is not None:
+        try:
+            # 在少数情况下主进程仍可能持有 full_body_ctrl binding
+            cmd_msg = full_body_ctrl(hand_mode=hand_mode, pose_mode=pose_mode, hand_set=hand_set, pose_set=pose_set)
+            pub.Write(cmd_msg, 0.1)
+        except Exception as e:
+            print("warning: local DDS publish failed:", e)
+    else:
+        # 通过 TCP 发送给 runner：hand_mode, pose_mode, hand_set, pose_set
+        try:
+            if DDS_CLIENT is not None:
+                payload = {"hand_mode": hand_mode, "pose_mode": pose_mode, "hand_set": hand_set, "pose_set": list(pose_set)}
+                payload = {
+                        "hand_mode": int(hand_mode),
+                        "pose_mode": int(pose_mode),
+                        "hand_set": [int(x) for x in hand_set],
+                        "pose_set": [float(x) for x in pose_set],
+                    }
+                try:
+                    DDS_CLIENT.sendall((json.dumps(payload) + "\n").encode())
+                except Exception as e:
+                    print("warning: failed to send cmd to unitree runner:", e)
+            else:
+                # no dds client available
+                pass
+        except Exception as e:
+            print("warning: error preparing dds payload:", e)
+
+
+def reorder_signals(signals: dict):
+    """
+    根据信号名称重新排序信号
+    """
+    qpos = [signals["lowstate"]["motor_state"][i]["q"] for i in range(29)]
+    qvel = [signals["lowstate"]["motor_state"][i]["dq"] for i in range(29)]
+    quat_pelvis = list(signals["lowstate"]["imu"]["quaternion"])
+    gyro_pelvis = list(signals["lowstate"]["imu"]["gyroscope"])
+    gvec_pelvis = list(signals["lowstate"]["imu"]["accelerometer"])
+    timestamp = signals["lowstate"]["timestamp"]
+
+    return qpos + qvel + gyro_pelvis + quat_pelvis + [timestamp]
+
+
+class JointPublisher(Node):
+    def __init__(self, fps: int, publish_signal: PublishSignal, dds_pub=None, dds_sub=None):
+        super().__init__('joint_state_publisher_demo')
+        self.publish_signal = publish_signal
+        self.pub = self.create_publisher(JointState, 'joint_states', 10)
+        self.start_time = time.time()
+        # self.frames = frames
+        self.dds_pub = dds_pub
+        self.dds_sub = dds_sub
+        self.frame_idx = 0
+
+        self.sim_joint_limits = [1.438,1.438,1.438,1.438,1.308,0.58,1.438,1.438,1.438,1.438,1.308,0.58,]
+
+        # 你的53个关节名称（对应g1_29dof_rev_1_0_with_inspire_hand_FTP这个文件）
+        self.joint_names = [
+            "left_hip_pitch_joint",
+            "left_hip_roll_joint",
+            "left_hip_yaw_joint",
+            "left_knee_joint",
+            "left_ankle_pitch_joint",
+            "left_ankle_roll_joint",
+            "right_hip_pitch_joint",
+            "right_hip_roll_joint",
+            "right_hip_yaw_joint",
+            "right_knee_joint",
+            "right_ankle_pitch_joint",
+            "right_ankle_roll_joint",
+            "waist_yaw_joint",
+            "waist_roll_joint",
+            "waist_pitch_joint",
+            "left_shoulder_pitch_joint",
+            "left_shoulder_roll_joint",
+            "left_shoulder_yaw_joint",
+            "left_elbow_joint",
+            "left_wrist_roll_joint",
+            "left_wrist_pitch_joint",
+            "left_wrist_yaw_joint",
+            "left_index_1_joint",
+            "left_index_2_joint",
+            "left_little_1_joint",
+            "left_little_2_joint",
+            "left_middle_1_joint",
+            "left_middle_2_joint",
+            "left_ring_1_joint",
+            "left_ring_2_joint",
+            "left_thumb_1_joint",
+            "left_thumb_2_joint",
+            "left_thumb_3_joint",
+            "left_thumb_4_joint",
+            "right_shoulder_pitch_joint",
+            "right_shoulder_roll_joint",
+            "right_shoulder_yaw_joint",
+            "right_elbow_joint",
+            "right_wrist_roll_joint",
+            "right_wrist_pitch_joint",
+            "right_wrist_yaw_joint",
+            "right_index_1_joint",
+            "right_index_2_joint",
+            "right_little_1_joint",
+            "right_little_2_joint",
+            "right_middle_1_joint",
+            "right_middle_2_joint",
+            "right_ring_1_joint",
+            "right_ring_2_joint",
+            "right_thumb_1_joint",
+            "right_thumb_2_joint",
+            "right_thumb_3_joint",
+            "right_thumb_4_joint",
+        ]
+
+        # self.timer = self.create_timer(0.2, self.frames_timer_callback)  # 20hz
+        self.timer = self.create_timer(1.0/fps, self.frames_timer_callback)  # 50hz
+
+
+    def frames_timer_callback(self):
+        frame_data = list(self.publish_signal.get().copy())
+
+        joint_msg = JointState()
+        joint_msg.header.stamp = self.get_clock().now().to_msg()
+        joint_msg.name = self.joint_names
+        # joint_msg.position = self.frames[self.frame_idx][8:]
+        joint_msg.position = [float(tmp) for tmp in frame_data[8:]]
+        # if self.frame_idx % 100 == 0:
+        #     print(f"[{self.frame_idx}]pub: {joint_msg.position}")
+        self.frame_idx += 1
+
+        self.pub.publish(joint_msg)
+
+        publish_cmds(frame_data, self.frame_idx, self.sim_joint_limits, self.dds_pub)
+
+        # cur_state = self.dds_sub.Read()
+        # if cur_state is not None:
+        #     print(f"sub full body state: {cur_state.pose_act}, time:{time.time()}")
+        # else:
+        #     print("subscribe full body state, get null.")
+
+def rl_updater(rl_fps: int, publish_signal: PublishSignal, receive_signal: ReceiveSignal, stop_evt: threading.Event):
+    # while not stop_evt.is_set():
+    #     v += 0.1
+    #     publish_signal.set(v)
+    #     time.sleep(0.5)
+
+    # mode = "simulation"
+    mode = "robot"
+
+    policy_model = init_model()
+
+    # 加载参考轨迹
+    traj_path = Path(os.path.join(os.path.dirname(__file__), "..", "planning", "Any2Track", "trajectory", "amass", "UnitreeG1", "A1 - Stand_poses_old_np.npz"))
+
+    print(f"Loading trajectory {os.path.splitext(os.path.basename(traj_path))[0]} from {traj_path}")
+
+    trajectory = init_traj(traj_path, policy_model.dt)
+
+    # qpos_data = trajectory.data.qpos
+    # qvel_data = trajectory.data.qvel
+    
+    # with open("qpos_data.csv", "w") as f:
+    #     f.write(",".join(["x", "y", "z", "qw", "qx", "qy", "qz"] + ["qpos" + str(i) for i in range(29)]) + "\n")
+    #     for qpos in qpos_data:
+    #         f.write(",".join([str(x) for x in qpos]) + "\n")
+    # with open("qvel_data.csv", "w") as f:
+    #     f.write(",".join(["vx", "vy", "vz", "vrx", "vry", "vrz"] + ["qvel" + str(i) for i in range(29)]) + "\n")
+    #     for qvel in qvel_data:
+    #         f.write(",".join([str(x) for x in qvel]) + "\n")
+
+    all_trajectories = [trajectory]
+
+    traj_datas = [t.data for t in all_trajectories]
+    traj_infos = [t.info for t in all_trajectories]
+    traj_data, traj_info = TrajectoryData.concatenate(traj_datas, traj_infos, backend=np)
+    trajectory = Trajectory(traj_info, traj_data)
+
+    # 降低轨迹的频率，从而延长轨迹的时长
+    trajectory.info.frequency = trajectory.info.frequency / 100.0
+    # trajectories.info.frequency = trajectory.info.frequency
+
+    # load trajectory again to ensure the latest transformed trajectories is loaded
+    policy_model.load_trajectory(trajectory, warn=False)
+    policy_model.ref_traj_names[0][1] = os.path.splitext(os.path.basename(traj_path))[0]
+
+    # receive_data = [0.0] * (29 + 29 + 3 + 4 + 1)
+    receive_data = consts.DEFAULT_QPOS[7:].tolist() + [0.0] * 29 + [0.0] * 3 + [1.0, 0.0, 0.0, 0.0] + [time.time()]
+
+    # 准备state
+    # reset the trajectory handler
+    if mode == "simulation":
+        state = policy_model.reset()
+        rl_fps = 50.0
+    else:
+        all_signals = receive_signal.get_all_signals(timeout=5.0)
+        if all_signals:
+            for signal_name, signal_data in all_signals.items():
+                if signal_name == "lowstate":
+                    motor_state = signal_data.get("motor_state")
+                    if isinstance(motor_state, (list, tuple)):
+                        print(f"初始化，接收到 {signal_name} 信号，motor_state sample: {motor_state[15:]}")
+                    else:
+                        print(f"初始化，接收到 {signal_name} 信号，keys: {list(signal_data.keys())}, motor_state type: {type(motor_state)}")
+            _receive_data = reorder_signals(all_signals)
+            if len(_receive_data) == 66:
+                receive_data = _receive_data
+        state = policy_model.reset_from_robot(receive_data)
+
+    output_file = open(
+        f"experiments/"
+            f"{policy_model.exp_name}/"
+            f"videos/"
+            f"{policy_model.ref_traj_names[policy_model.current_traj_info.traj_state.traj_no][0]}/"
+            f"{policy_model.ref_traj_names[policy_model.current_traj_info.traj_state.traj_no][1]}.csv",
+        "w"
+    )
+
+    # write the header
+    output_file.write(",".join(consts.PUBLISH_JOINT_NAMES) + "\n")
+
+    # 在线循环：使用 PolicyModel 进行推理
+    i = 0
+    len_traj = policy_model.th.traj.data.qpos.shape[0] - 1
+    # len_traj = min(len_traj, 1000)
+
+    while i < len_traj and not stop_evt.is_set():
+    # while not stop_evt.is_set():
+        # 从接收信号状态读取接收到的信号数据
+        start_time = time.time()
+        all_signals = receive_signal.get_all_signals(timeout=5.0)
+        if all_signals:
+            for signal_name, signal_data in all_signals.items():
+                if i % 100 == 0 and signal_name == "lowstate":
+                    print(f"[frame {i}] 接收到 {signal_name} 信号，{signal_data['motor_state'][15:]}")
+
+            _receive_data = reorder_signals(all_signals)
+            if len(_receive_data) == 66:
+                receive_data = _receive_data
+
+        if i % 100 == 0:
+            # print("receive_data")
+            # print(" ".join([f"{tmp:.4f}" for tmp in receive_data[-7:-1]]))
+            print(f"\n\nframe: {i}\n\n")
+            print(f"\nreceive_data:")
+            print(f"left leg: {receive_data[0:6]}")
+            print(f"right leg: {receive_data[6:12]}")
+            print(f"waist: {receive_data[12:15]}")
+            print(f"left arm: {receive_data[15:22]}")
+            print(f"right arm: {receive_data[22:29]}")
+            print(f"gyro_pelvis: {receive_data[-8:-5]}")
+            print(f"quat_pelvis: {receive_data[-5:-1]}")
+            # print(f"Step {i}")
+            # 准备输入数据（参考轨迹)
+            """
+                state_dict = {
+                    "gyro_pelvis": gyro_pelvis * self._config["obs_scales_config"]["joint_vel"],
+                    "gvec_pelvis": gvec_pelvis,
+                    "joint_pos": (joint_pos - self._default_qpos)[self.obs_joint_ids],
+                    "joint_vel": joint_vel[self.obs_joint_ids] * self._config["obs_scales_config"]["joint_vel"],
+                    "last_motor_targets": info["last_motor_targets"],
+                    "dif_joint_pos": dif_joint_pos,
+                    "dif_joint_vel": dif_joint_vel * self._config["obs_scales_config"]["joint_vel"],
+                    "ref_feet_height": ref_feet_height,
+                    "ref_root_height": qpos[2],
+                    "ref_root_linvel": (traj_root_rot_mat.T @ qvel[:3]) * self._config["obs_scales_config"]["joint_vel"],
+                    "ref_root_angvel": qvel[3:6] * self._config["obs_scales_config"]["joint_vel"],
+                }
+            """
+            print("gyro_pelvis: ", state.obs["state"][:3])
+            print("gvec_pelvis: ", state.obs["state"][3:6])
+            print("joint_pos: ", state.obs["state"][6:35])
+            print("joint_vel: ", state.obs["state"][35:64])
+            print("last_motor_targets: ", state.obs["state"][64:93])
+            print("dif_joint_pos: ", state.obs["state"][93:122])
+            print("dif_joint_vel: ", state.obs["state"][122:151])
+            print("ref_feet_height: ", state.obs["state"][151:155])
+            print("ref_root_height: ", state.obs["state"][155:156])
+            print("ref_root_linvel: ", state.obs["state"][156:159])
+            print("ref_root_angvel: ", state.obs["state"][159:162])
+
+        i += 1
+        if mode == "simulation":
+            # 推理：运行 ONNX 模型
+            action = policy_model.run_inference(state.obs["state"])
+
+            # 预处理：构建观测和参考动作
+            qpos, qvel = policy_model.th.get_current_traj_data_fast(state.info["traj_info"])
+            # qpos = consts.DEFAULT_QPOS
+            # qvel = np.zeros_like(qvel)
+            # import pdb; pdb.set_trace()
+
+            postprocess_dict = {
+                'qpos': qpos,
+                'qvel': qvel,
+                'action': action,
+                'state': state
+            }
+
+            # 后处理：更新状态并渲染
+            state = policy_model.postprocess(postprocess_dict)
+        else:
+            action = policy_model.run_inference(state.obs["state"])
+
+            # 预处理：构建观测和参考动作
+            qpos, qvel = policy_model.th.get_current_traj_data_fast(state.info["traj_info"])
+            joint_pos, joint_vel, gyro_pelvis, quat_pelvis, timestep = policy_model.decode_data(receive_data)
+
+            postprocess_dict = {
+                'qpos': qpos,
+                'qvel': qvel,
+                'joint_pos': joint_pos,
+                'joint_vel': joint_vel,
+                'gyro_pelvis': gyro_pelvis,
+                'quat_pelvis': quat_pelvis,
+                'action': action,
+                'state': state
+            }
+
+            # 后处理：更新状态并渲染
+            state = policy_model.postprocess_robot(postprocess_dict)
+
+        publish_joint_list = policy_model.publish(i, qpos, state.info["last_motor_targets"])
+        publish_joint_list_short = publish_joint_list[8:8+22] + publish_joint_list[8+22+12:8+22+12+7]
+
+        if i % 1 == 0:
+            print(f"\nframe: {i}")
+            print(f"publish_data:")
+            print("left leg: ", publish_joint_list_short[0:6])
+            print("right leg: ", publish_joint_list_short[6:12])
+            print("waist: ", publish_joint_list_short[12:15])
+            print("left arm: ", publish_joint_list_short[15:22])
+            print("right arm: ", publish_joint_list_short[22:29])
+        output_file.write(",".join([str(x) for x in publish_joint_list]) + "\n")
+        publish_signal.set(publish_joint_list)
+        # print(f"frame: {i}")
+        # print(publish_joint_list)
+        end_time = time.time()
+        if end_time - start_time < 1.0/rl_fps:
+            time.sleep(1.0/rl_fps - (end_time - start_time))
+        else:
+            print(f"time cost: {end_time - start_time}")
+
+
+def signal_receiver_thread(signal_receiver: SignalReceiver, receive_signal: ReceiveSignal, stop_evt: threading.Event):
+    """
+    在单独线程中运行信号接收器，并将接收到的信号更新到接收信号状态
+
+    Args:
+        signal_receiver: SignalReceiver 节点实例
+        receive_signal: 接收信号状态
+        stop_evt: 停止事件
+    """
+    executor = rclpy.executors.SingleThreadedExecutor()
+    executor.add_node(signal_receiver)
+
+    update_interval = 0.01  # 每 0.01 秒更新一次接收信号状态
+    last_update_time = time.time()
+
+    try:
+        while not stop_evt.is_set():
+            executor.spin_once(timeout_sec=0.1)
+
+            # 定期从 signal_receiver 获取所有信号并更新到接收信号状态
+            current_time = time.time()
+            if current_time - last_update_time >= update_interval:
+                try:
+                    # 获取所有接收到的信号
+                    all_signals = signal_receiver.get_all_signals(timeout=0.1)
+                    if all_signals:
+                        # 提取信号数据并更新到接收信号状态
+                        signals_dict = {}
+                        for signal_name, signal_info in all_signals.items():
+                            signals_dict[signal_name] = signal_info['data']
+                        receive_signal.set_signals(signals_dict)
+                    last_update_time = current_time
+                except Exception as e:
+                    signal_receiver.get_logger().error(f'Error updating receive signal state: {e}')
+    except Exception as e:
+        signal_receiver.get_logger().error(f'Error in signal_receiver_thread: {e}')
+    finally:
+        executor.remove_node(signal_receiver)
+
+
+def print_received_signals(signal_receiver: SignalReceiver, print_interval: int = 100):
+    """
+    定期打印接收到的信号统计信息
+
+    Args:
+        signal_receiver: SignalReceiver 节点实例
+        print_interval: 打印间隔（消息数）
+    """
+    stats = signal_receiver.get_receive_stats()
+    if stats:
+        print("\n=== 信号接收统计 ===")
+        for topic, count in sorted(stats.items()):
+            print(f"{topic}: {count} 条消息")
+        print("=" * 30 + "\n")
+
+
+def main(args=None):
+    rl_fps = 50.0
+    # 启动 unitree DDS runner 子进程（避免在本进程初始化 CycloneDDS）
+    try:
+        start_unitree_dds_runner()
+    except Exception as e:
+        print("warning: failed to start unitree runner:", e)
+
+    rclpy.init(args=args)
+
+    # 不在本进程初始化 dds 句柄；将 dds_publisher/ds_subscriber 置为 None，publish_cmds 会通过 socket 转发
+    dds_publisher = None
+    dds_subscriber = None
+    
+    publish_signal = PublishSignal()  # 创建发布信号状态（从 rl_node 发送出去的消息）
+    receive_signal = ReceiveSignal()  # 创建接收信号状态（从 joint_receiver 接收的消息）
+    stop_evt = threading.Event()
+
+    node = JointPublisher(rl_fps, publish_signal, dds_pub=dds_publisher, dds_sub = dds_subscriber)
+
+    # 创建信号接收器
+    signal_receiver = SignalReceiver()
+
+    # 启动信号接收器线程，传入接收信号状态
+    receiver_thread = threading.Thread(
+        target=signal_receiver_thread,
+        args=(signal_receiver, receive_signal, stop_evt),
+        daemon=True,
+    )
+    receiver_thread.start()
+
+    # 启动 RL 更新线程，传入发布信号状态和接收信号状态
+    updater_thread = threading.Thread(
+        target=rl_updater,
+        args=(rl_fps, publish_signal, receive_signal, stop_evt),
+        daemon=True,
+    )
+    updater_thread.start()
+
+    try:
+        rclpy.spin(node)          # 单线程执行器，回调与主线程同线程运行
+    except KeyboardInterrupt:
+        pass
+    finally:
+        stop_evt.set()
+        updater_thread.join()
+        receiver_thread.join()
+        # 打印接收统计
+        print_received_signals(signal_receiver)
+        signal_receiver.destroy_node()
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
