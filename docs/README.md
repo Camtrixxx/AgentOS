@@ -16,3 +16,12 @@
 - [original_stereo_hand_retargeting_pipeline.txt](reference/original_stereo_hand_retargeting_pipeline.txt): 双目手部三角化、retargeting、IK 和控制桥接相关代码资料。
 - [original_realtime_rl_unitree_dds_node.txt](reference/original_realtime_rl_unitree_dds_node.txt): ROS2、Any2Track、Unitree DDS 实时节点相关代码资料。
 - [original_full_body_arm_bridge_cpp.txt](reference/original_full_body_arm_bridge_cpp.txt): C++ full-body / arm SDK / Inspire Hand bridge 相关代码资料。
+
+## External Reference Project Architecture
+
+外部参考项目的源码放在本仓库外的 `/data/heyuhang/hyh/reference-repos/`，详细架构分析记录在 [reference_projects/](reference_projects/) 下。
+
+- [reference_projects/README.md](reference_projects/README.md): 参考项目索引和总体结论。
+- [reference_projects/phyagentos_architecture.md](reference_projects/phyagentos_architecture.md): PhyAgentOS 具身 Agent OS 架构拆解。
+- [reference_projects/helloagents_architecture.md](reference_projects/helloagents_architecture.md): HelloAgents 通用 Agent 工程架构拆解。
+- [reference_projects/upgrade_mapping.md](reference_projects/upgrade_mapping.md): 两个参考项目对当前项目的升级映射。
