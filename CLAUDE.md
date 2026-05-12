@@ -33,8 +33,27 @@ python learning/evaluate_policy.py --policy scripted --write-report
 python learning/evaluate_policy.py --policy bc --checkpoint checkpoints/bc_policy.pt --write-report
 python learning/evaluate_policy.py --policy vision_bc --checkpoint checkpoints/vision_bc_random_policy.pt --write-report
 python learning/evaluate_policy.py --policy vla --vla-backend mock --write-report
+python learning/evaluate_policy.py --policy vla --vla-backend smolvla_dry_run --write-report
+python learning/evaluate_policy.py --policy rl --rl-backend scripted --write-report
 
-# Clean generated artifacts (data/, outputs/, checkpoints/)
+# RL training (requires stable-baselines3)
+python scripts/train_rl.py --backend sb3 --timesteps 10000 --randomize-layout
+
+# Dataset inspection and LeRobot export
+python scripts/inspect_dataset.py --data-dir data/vision_demos_random
+python scripts/export_lerobot_dataset.py --data-dir data/vision_demos_random --output-dir outputs/lerobot_export
+
+# Policy benchmark across all backends
+python scripts/benchmark_policies.py --num-episodes 3
+
+# Tool-based agent with file-backed workspace protocol
+python scripts/run_tool_agent.py "pick up the red block and place it in the bowl"
+python scripts/run_planner_agent.py "pick up the green block and place it in the bowl" --randomize-layout
+
+# Standalone watchdog polling ACTION.md
+python scripts/run_watchdog.py --once
+
+# Clean generated artifacts (data/, outputs/, checkpoints/, workspace/)
 bash scripts/sh/99_clean_generated.sh
 ```
 
@@ -59,10 +78,13 @@ Central orchestration. `AgentLoop(env, policy, recorder?)` runs environment roll
 | `BCPolicy` | `bc_policy.py` | State-only BC model (no vision) |
 | `VisionBCPolicy` | `vision_bc_policy.py` | BC with CNN image encoder |
 | `VLAPolicy` | `vla_policy.py` | Delegates to a `VLABackend` via `FakeEnvVLAAdapter` |
+| `RLPolicy` | `rl_policy.py` | Wraps scripted/random/SB3 backends behind the Policy protocol |
 
 ### VLA-ready interface (`vla/`, `adapters/`)
 
-`VLABackend` is a Protocol with one method: `predict(observation: VLAObservation) -> VLAAction`. `FakeEnvVLAAdapter` translates `FakeManipulationEnv` observations/actions to the VLA contract. To add a real VLA model, implement a new backend following the same `predict` signature.
+`VLABackend` is a Protocol with one method: `predict(observation: VLAObservation) -> VLAAction`. `FakeEnvVLAAdapter` translates `FakeManipulationEnv` observations/actions to the VLA contract. Three backends exist:
+- `MockVLABackend` — deterministic mock, always moves toward the target color
+- `SmolVLABackend` — loads LeRobot SmolVLA; falls back to mock on import/load failure. Supports `dry_run=True` to test the integration point without the model
 
 ### Fake environment (`envs/fake_manipulation_env.py`)
 
@@ -76,6 +98,54 @@ Central orchestration. `AgentLoop(env, policy, recorder?)` runs environment roll
 - `train_bc.py` — train state BC from demonstrations
 - `train_vision_bc.py` — train VisionBC from vision demonstrations
 - `evaluate_policy.py` — unified evaluation entry point for all policy types
+- `devices.py` — resolve `cpu`/`cuda`/`npu`/`auto` torch devices (auto-detects NPU)
+
+### RL integration (`rl/`)
+
+`FakeManipulationGymEnv` wraps `FakeManipulationEnv` as a Gymnasium-style env (reset/step/render) without requiring the `gymnasium` package. Used by `scripts/train_rl.py` with stable-baselines3 PPO.
+
+### HAL — Hardware Abstraction Layer (`hal/`)
+
+`BaseDriver` is an ABC defining the driver contract: `load_environment()`, `execute_action()`, `get_environment()`, plus connect/disconnect/health_check lifecycle methods. `FakeManipulationDriver` implements it over `FakeManipulationEnv` and is the runtime's single point of contact with the environment.
+
+### Runtime system (`runtime/`)
+
+A file-backed embodied agent runtime using a workspace of Markdown files as the inter-module protocol:
+
+```
+workspace/
+├── ACTION.md       # JSON-fenced action queue; watchdog consumes first pending item
+├── ENVIRONMENT.md  # JSON-fenced environment state (robot, objects, receptacles, episode)
+├── EMBODIED.md     # Static driver profile (supported actions, constraints)
+├── LESSONS.md      # Human-readable failure log for post-mortem
+├── TASK.md         # Current task state
+├── SKILL.md        # Reusable workflow recipes
+├── PLAN.md         # Task plan document
+└── REPORT.md       # Execution report
+```
+
+Key components:
+- **Planner** (`planner.py`) — `RuleBasedPlanner` produces a `TaskPlan` of `PlannedStep`s (reset_task, scripted_pick_place_loop, render)
+- **Executor** (`executor.py`) — runs a `TaskPlan` via `ToolRegistry`, looping policy actions through the watchdog
+- **Watchdog** (`watchdog.py`) — polls `ACTION.md` for pending actions, validates them via `ActionValidator`, executes through the HAL driver, writes results back
+- **Action queue** (`action_queue.py`) — JSON-fenced Markdown queue with normalize/append/poll/save primitives
+- **Action validator** (`action_validator.py`) — validates action type, parameter shape, workspace bounds, and step delta limits
+- **Environment I/O** (`environment_io.py`) — bi-directional conversion between env observations and the `ENVIRONMENT.md` document
+
+### Tools system (`tools/`)
+
+Plug-in tools implementing a `Tool` protocol (`name`, `description`, `run(parameters) -> ToolResponse`). Registered in `ToolRegistry` with optional tracing. Tools are the runtime's composable action units:
+
+| Tool | What it does |
+|------|-------------|
+| `ReadEnvironmentTool` | Loads `ENVIRONMENT.md` |
+| `AppendActionTool` | Validates and queues an action in `ACTION.md` |
+| `RunWatchdogOnceTool` | Executes the first pending action |
+| `ResetTaskTool` | Chains append_action → watchdog for `reset` |
+| `StepEnvTool` | Chains append_action → watchdog for `env_step` |
+| `RenderFakeEnvTool` | Renders the environment to PPM |
+| `CreatePlanTool` | Writes a `TaskPlan` to `PLAN.md` |
+| `EvaluateScriptedPolicyTool` | Runs scripted policy evaluation |
 
 ### Teleop-to-control pipeline
 
@@ -85,9 +155,15 @@ Central orchestration. `AgentLoop(env, policy, recorder?)` runs environment roll
 - `control/fake_robot_backend.py` — no-hardware robot backend
 - `kinematics/ik_solver.py` — placeholder IK solver (shape only)
 
+### Datasets (`datasets/`)
+
+- `episode_recorder.py` / `vision_episode_recorder.py` — record episodes to `data/`
+- `inspector.py` — validate dataset quality (missing images, bad shapes, success rate, action stats)
+- `lerobot_exporter.py` — export to LeRobot JSONL manifest and optional native `LeRobotDataset` format
+
 ### Generated directories (gitignored)
 
-`data/`, `outputs/`, `checkpoints/` — all runtime artifacts. Clean with `scripts/sh/99_clean_generated.sh`.
+`data/`, `outputs/`, `checkpoints/`, `workspace/` — all runtime artifacts. Clean with `scripts/sh/99_clean_generated.sh`.
 
 ## Key Design Conventions
 

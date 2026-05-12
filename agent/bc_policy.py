@@ -6,6 +6,7 @@ from typing import Any
 import numpy as np
 import torch
 
+from learning.devices import resolve_torch_device
 from learning.features import FEATURE_DIM, extract_state_features
 from learning.models import MLPPolicy
 
@@ -14,7 +15,7 @@ class BCPolicy:
     """Behavior cloning policy with the same interface as scripted policies."""
 
     def __init__(self, checkpoint_path: str | Path, device: str = "cpu"):
-        self.device = torch.device(device)
+        self.device = resolve_torch_device(device)
         checkpoint = torch.load(checkpoint_path, map_location=self.device)
         action_dim = int(checkpoint.get("action_dim", 3))
         hidden_dim = int(checkpoint.get("hidden_dim", 128))
@@ -28,4 +29,3 @@ class BCPolicy:
             x = torch.from_numpy(features).float().unsqueeze(0).to(self.device)
             action = self.model(x).squeeze(0).cpu().numpy()
         return action.astype(float)
-

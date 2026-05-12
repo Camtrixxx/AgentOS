@@ -18,6 +18,7 @@ conda-meta/
 # Data / outputs / logs
 data/
 outputs/
+workspace/
 runs/
 logs/
 checkpoints/

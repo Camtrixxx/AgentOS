@@ -7,6 +7,8 @@
 - [project_overview.md](project_overview.md): 项目整体定位、架构、模块说明和路线图。
 - [embodied_agent_upgrade.md](embodied_agent_upgrade.md): 具身 Agent 升级说明，包括 fake 环境、policy loop 和数据记录。
 - [running_guide.md](running_guide.md): 项目各功能模块的运行命令、快捷脚本和输出说明。
+- [smolvla_rl_integration.md](smolvla_rl_integration.md): SmolVLA 和强化学习接入路线、脚本和评估入口。
+- [dataset_quality.md](dataset_quality.md): Demonstration 数据质量检查、LeRobot 导出和小规模 policy benchmark。
 
 ## Reference Materials
 

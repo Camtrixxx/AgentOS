@@ -11,6 +11,7 @@ from adapters.vla_adapter import FakeEnvVLAAdapter, VLAAction
 from agent.agent_loop import AgentLoop
 from agent.vla_policy import VLAPolicy
 from envs.fake_manipulation_env import FakeManipulationConfig, FakeManipulationEnv, TaskSpec
+from vla.smolvla_backend import SmolVLABackend
 
 
 def test_vla_adapter_converts_action():
@@ -36,3 +37,12 @@ def test_mock_vla_policy_solves_randomized_layout():
 
     assert result.success
 
+
+def test_vla_policy_accepts_smolvla_dry_run_backend():
+    env = FakeManipulationEnv(seed=0)
+    observation = env.reset(TaskSpec("pick up the red block and place it in the bowl", "red"))
+    policy = VLAPolicy(backend=SmolVLABackend(dry_run=True))
+
+    action = policy.act(observation)
+
+    assert action.shape == (3,)

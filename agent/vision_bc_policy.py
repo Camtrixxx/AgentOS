@@ -6,6 +6,7 @@ from typing import Any
 import numpy as np
 import torch
 
+from learning.devices import resolve_torch_device
 from learning.features import COLORS, FEATURE_DIM, extract_state_features, parse_target_color
 from learning.vision_models import VisionBCPolicyNet
 
@@ -14,7 +15,7 @@ class VisionBCPolicy:
     """CNN behavior cloning policy using observation image + language color."""
 
     def __init__(self, checkpoint_path: str | Path, device: str = "cpu"):
-        self.device = torch.device(device)
+        self.device = resolve_torch_device(device)
         checkpoint = torch.load(checkpoint_path, map_location=self.device)
         self.model = VisionBCPolicyNet(
             task_dim=int(checkpoint.get("task_dim", len(COLORS))),

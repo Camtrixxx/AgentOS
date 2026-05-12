@@ -32,6 +32,116 @@ outputs/fake_env.ppm
 outputs/eval_reports_smoke/
 ```
 
+## 1.1 Embodied Runtime Workspace
+
+初始化 Markdown workspace：
+
+```bash
+python3 scripts/init_workspace.py
+```
+
+这会创建运行时协议文件：
+
+```text
+workspace/ACTION.md
+workspace/ENVIRONMENT.md
+workspace/EMBODIED.md
+workspace/LESSONS.md
+workspace/TASK.md
+workspace/SKILL.md
+workspace/PLAN.md
+workspace/REPORT.md
+```
+
+排队一个动作：
+
+```bash
+python3 - <<'PY'
+from runtime.action_queue import append_action, load_action_document, save_action_document
+from runtime.workspace import initialize_workspace
+
+paths = initialize_workspace("workspace")
+doc = load_action_document(paths.action)
+doc = append_action(doc, action_type="env_step", parameters={"action": [0.02, 0.0, -1.0]})
+save_action_document(paths.action, doc)
+PY
+```
+
+让 watchdog 执行一个 pending action：
+
+```bash
+python3 scripts/run_watchdog.py --once
+```
+
+持续监听：
+
+```bash
+python3 scripts/run_watchdog.py --poll-interval 1.0
+```
+
+运行最小工具 Agent。它会通过 `ToolRegistry` 调用 `reset_task`、`read_environment`、`step_env`、`render_fake_env`，并把工具调用写入 `outputs/traces/*.jsonl`：
+
+```bash
+python3 scripts/run_tool_agent.py "pick up the red block and place it in the bowl"
+```
+
+在 Docker 中运行：
+
+```bash
+docker exec heyuhang-dl bash -lc '
+cd /workspace/hyh/embodied-teleop-control-lab
+python scripts/run_tool_agent.py "pick up the red block and place it in the bowl" \
+  --workspace workspace/tool_agent_smoke \
+  --render-output outputs/tool_agent_smoke.ppm
+'
+```
+
+运行规则 Planner + Critic Agent。它会先把自然语言任务转成计划，再让 Critic 校验每个动作：
+
+```bash
+python3 scripts/run_planner_agent.py "pick up the blue block and place it in the bowl"
+```
+
+在 Docker 中运行：
+
+```bash
+docker exec heyuhang-dl bash -lc '
+cd /workspace/hyh/embodied-teleop-control-lab
+python scripts/run_planner_agent.py "pick up the blue block and place it in the bowl" \
+  --workspace workspace/planner_agent_smoke \
+  --render-output outputs/planner_agent_smoke.ppm
+'
+```
+
+运行后重点查看：
+
+```text
+workspace/.../PLAN.md      # Planner 生成的任务计划
+workspace/.../REPORT.md    # 执行报告
+workspace/.../LESSONS.md   # 失败或被 Critic 拒绝的经验记录
+outputs/traces/*.jsonl     # 工具调用和执行事件 trace
+```
+
+当前华为 Ascend 服务器上，系统 Python 可能尚未安装 `numpy`、`pytest`、`torch`、`torch_npu`。workspace 初始化不依赖这些包，但 fake manipulation driver 需要 `numpy`，BC/VisionBC 训练需要 PyTorch。
+
+如果使用当前 Docker 环境，项目路径是：
+
+```bash
+docker exec heyuhang-dl bash -lc 'cd /workspace/hyh/embodied-teleop-control-lab && python scripts/init_workspace.py'
+```
+
+容器内 `torch_npu` 可用。如果只使用后四张 NPU，可以这样运行训练：
+
+```bash
+docker exec heyuhang-dl bash -lc '
+cd /workspace/hyh/embodied-teleop-control-lab
+ASCEND_RT_VISIBLE_DEVICES=4,5,6,7 python learning/train_vision_bc.py \
+  --data-dir data/vision_demos_random \
+  --output checkpoints/vision_bc_random_policy.pt \
+  --device npu
+'
+```
+
 ## 2. 遥操作到控制管线
 
 命令：
@@ -279,6 +389,82 @@ observation
 predict(observation: VLAObservation) -> VLAAction
 ```
 
+### 7.1 SmolVLA Bridge
+
+训练前先检查数据质量：
+
+```bash
+python scripts/inspect_dataset.py \
+  --data-dir data/vision_demos_random \
+  --expect-images \
+  --output-dir outputs/dataset_quality_random
+```
+
+导出当前 vision demos 为 LeRobot-style manifest：
+
+```bash
+python scripts/export_lerobot_dataset.py \
+  --data-dir data/vision_demos_random \
+  --output-dir data/lerobot_fake_manipulation \
+  --format manifest
+```
+
+不安装 LeRobot 时，可以先跑 SmolVLA dry-run 后端，验证 VLA 接口和评估链路：
+
+```bash
+python learning/evaluate_policy.py \
+  --policy vla \
+  --vla-backend smolvla_dry_run \
+  --num-episodes 3 \
+  --write-report
+```
+
+安装 LeRobot/SmolVLA 后，可切换为真实后端：
+
+```bash
+ASCEND_RT_VISIBLE_DEVICES=4,5,6,7 python learning/evaluate_policy.py \
+  --policy vla \
+  --vla-backend smolvla \
+  --smolvla-model lerobot/smolvla_base \
+  --device npu
+```
+
+### 7.2 Reinforcement Learning
+
+先 smoke-test Gym-style fake env wrapper：
+
+```bash
+python scripts/train_rl.py --backend smoke
+```
+
+评估 RL policy wrapper 的 deterministic baseline：
+
+```bash
+python learning/evaluate_policy.py \
+  --policy rl \
+  --rl-backend scripted \
+  --num-episodes 3 \
+  --write-report
+```
+
+安装 `stable-baselines3` 后，可以训练 PPO：
+
+```bash
+python scripts/train_rl.py \
+  --backend sb3 \
+  --timesteps 10000 \
+  --output checkpoints/rl_ppo_fake_manipulation.zip
+```
+
+小规模 policy 对比：
+
+```bash
+python scripts/benchmark_policies.py \
+  --num-episodes 3 \
+  --max-steps 100 \
+  --output-dir outputs/policy_benchmark
+```
+
 ## 8. Evaluation Reports
 
 所有 policy 都可以用同一个评估入口：
@@ -288,6 +474,7 @@ python learning/evaluate_policy.py --policy scripted --write-report
 python learning/evaluate_policy.py --policy bc --checkpoint checkpoints/bc_policy.pt --write-report
 python learning/evaluate_policy.py --policy vision_bc --checkpoint checkpoints/vision_bc_random_policy.pt --write-report
 python learning/evaluate_policy.py --policy vla --vla-backend mock --write-report
+python learning/evaluate_policy.py --policy rl --rl-backend scripted --write-report
 ```
 
 报告输出：

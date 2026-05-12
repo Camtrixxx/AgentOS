@@ -12,6 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from agent.agent_loop import AgentLoop
 from agent.bc_policy import BCPolicy
+from agent.rl_policy import RLPolicy
 from agent.scripted_policy import ScriptedPickPlacePolicy
 from agent.vla_policy import VLAPolicy
 from agent.vision_bc_policy import VisionBCPolicy
@@ -26,14 +27,17 @@ from evaluation.report import (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate a policy in FakeManipulationEnv.")
-    parser.add_argument("--policy", default="bc", choices=["bc", "vision_bc", "vla", "scripted"])
+    parser.add_argument("--policy", default="bc", choices=["bc", "vision_bc", "vla", "scripted", "rl"])
     parser.add_argument("--checkpoint", default="checkpoints/bc_policy.pt")
-    parser.add_argument("--vla-backend", default="mock", choices=["mock"])
+    parser.add_argument("--vla-backend", default="mock", choices=["mock", "smolvla", "smolvla_dry_run"])
+    parser.add_argument("--smolvla-model", default="lerobot/smolvla_base")
+    parser.add_argument("--rl-backend", default="scripted", choices=["scripted", "random", "sb3"])
     parser.add_argument("--num-episodes", type=int, default=9)
     parser.add_argument("--max-steps", type=int, default=80)
     parser.add_argument("--randomize-layout", action="store_true")
     parser.add_argument("--write-report", action="store_true")
     parser.add_argument("--report-dir", default="outputs/eval_reports")
+    parser.add_argument("--device", default="cpu", help="Policy device for bc/vision_bc: cpu, cuda, cuda:0, or npu.")
     return parser.parse_args()
 
 
@@ -59,7 +63,7 @@ def main() -> None:
             randomize_layout=args.randomize_layout,
         )
         env = FakeManipulationEnv(config=config, seed=episode_idx)
-        policy = make_policy(args.policy, PROJECT_ROOT / args.checkpoint, args.vla_backend)
+        policy = make_policy(args)
         result = AgentLoop(env, policy).run_episode(task=task, max_steps=args.max_steps)
         successes += int(result.success)
         total_steps += result.steps
@@ -106,17 +110,32 @@ def main() -> None:
         print(f"report_markdown={md_path}")
 
 
-def make_policy(policy_name: str, checkpoint_path: Path, vla_backend: str):
+def make_policy(args: argparse.Namespace):
+    policy_name = args.policy
+    checkpoint_path = PROJECT_ROOT / args.checkpoint
     if policy_name == "scripted":
         return ScriptedPickPlacePolicy()
     if policy_name == "bc":
-        return BCPolicy(checkpoint_path)
+        return BCPolicy(checkpoint_path, device=args.device)
     if policy_name == "vision_bc":
-        return VisionBCPolicy(checkpoint_path)
+        return VisionBCPolicy(checkpoint_path, device=args.device)
     if policy_name == "vla":
-        if vla_backend != "mock":
-            raise ValueError(f"Unsupported VLA backend {vla_backend!r}")
-        return VLAPolicy()
+        if args.vla_backend == "mock":
+            return VLAPolicy()
+        if args.vla_backend in {"smolvla", "smolvla_dry_run"}:
+            from vla.smolvla_backend import SmolVLABackend
+
+            return VLAPolicy(
+                backend=SmolVLABackend(
+                    args.smolvla_model,
+                    device=args.device,
+                    dry_run=args.vla_backend == "smolvla_dry_run",
+                )
+            )
+        raise ValueError(f"Unsupported VLA backend {args.vla_backend!r}")
+    if policy_name == "rl":
+        checkpoint = checkpoint_path if args.rl_backend == "sb3" else None
+        return RLPolicy(backend=args.rl_backend, checkpoint=checkpoint)
     raise ValueError(f"Unknown policy {policy_name!r}")
 
 
