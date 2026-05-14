@@ -9,6 +9,7 @@
 - [running_guide.md](running_guide.md): 项目各功能模块的运行命令、快捷脚本和输出说明。
 - [smolvla_rl_integration.md](smolvla_rl_integration.md): SmolVLA 和强化学习接入路线、脚本和评估入口。
 - [dataset_quality.md](dataset_quality.md): Demonstration 数据质量检查、LeRobot 导出和小规模 policy benchmark。
+- [architecture_diagram.md](architecture_diagram.md): 项目架构图、核心数据流、Agent OS 运行流和 SmolVLA/LeRobot 接入说明。
 
 ## Reference Materials
 
