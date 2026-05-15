@@ -23,6 +23,11 @@ class DriverRegistry(Registry[type[BaseDriver]]):
 
     def _init_builtins(self) -> None:
         self.register("fake_manipulation", FakeManipulationDriver)
+        try:
+            from hal.robosuite_driver import RobosuiteDriver
+        except ImportError:
+            return
+        self.register("robosuite", RobosuiteDriver)
 
     def load_driver(self, name: str, **kwargs: Any) -> BaseDriver:
         cls = self.get(name)

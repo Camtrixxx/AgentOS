@@ -34,3 +34,20 @@ def test_validator_rejects_unknown_reset_color():
     assert not result.valid
     assert "target_color" in result.reason
 
+
+def test_validator_accepts_driver_declared_4d_action():
+    environment = {
+        "robot": {"ee_position": [0.0, -0.75, 0.5]},
+        "runtime": {
+            "capabilities": {
+                "action_dims": [3, 4],
+                "workspace_low": [-1.0, -1.0, 0.0],
+                "workspace_high": [1.0, 1.0, 1.0],
+                "max_step_delta": 0.06,
+            }
+        },
+    }
+
+    result = validate_action("env_step", {"action": [0.02, 0.0, 0.01, -1.0]}, environment)
+
+    assert result.valid

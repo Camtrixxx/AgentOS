@@ -12,6 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from envs.fake_manipulation_env import FakeManipulationConfig, FakeManipulationEnv
 from hal.fake_manipulation_driver import FakeManipulationDriver
+from hal.drivers import load_driver
 from runtime.executor import AgentOSExecutor
 from runtime.planner import Planner, RuleBasedPlanner
 from runtime.trace import TraceLogger
@@ -26,6 +27,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--randomize-layout", action="store_true")
     parser.add_argument("--render-output", default="outputs/agentos_env.ppm")
+    parser.add_argument("--driver", choices=["fake_manipulation", "robosuite"], default="fake_manipulation")
+    parser.add_argument("--sim-task", default="Lift", help="Simulator task name for optional simulator drivers.")
+    parser.add_argument("--robot", default="Panda", help="Robot model for optional simulator drivers.")
     parser.add_argument(
         "--planner",
         choices=["rule", "skill", "deepseek"],
@@ -42,13 +46,22 @@ def main() -> None:
     args = parse_args()
     workspace = PROJECT_ROOT / args.workspace
 
-    config = FakeManipulationConfig(
-        workspace_low=np.array([-1.0, -1.0], dtype=float),
-        workspace_high=np.array([1.0, 1.0], dtype=float),
-        randomize_layout=args.randomize_layout,
-    )
-    env = FakeManipulationEnv(config=config, seed=args.seed)
-    driver = FakeManipulationDriver(env=env)
+    if args.driver == "robosuite":
+        driver = load_driver(
+            "robosuite",
+            task_name=args.sim_task,
+            robot=args.robot,
+            seed=args.seed,
+            has_offscreen_renderer=bool(args.render_output),
+        )
+    else:
+        config = FakeManipulationConfig(
+            workspace_low=np.array([-1.0, -1.0], dtype=float),
+            workspace_high=np.array([1.0, 1.0], dtype=float),
+            randomize_layout=args.randomize_layout,
+        )
+        env = FakeManipulationEnv(config=config, seed=args.seed)
+        driver = FakeManipulationDriver(env=env)
     trace = TraceLogger(PROJECT_ROOT / "outputs" / "traces")
     planner: Planner
     if args.planner == "deepseek":

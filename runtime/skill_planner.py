@@ -121,7 +121,10 @@ def instantiate_skill(
         )
         for step in skill.steps
     ]
-    return force_target_color(TaskPlan(normalized_instruction, color, steps), color)
+    plan = TaskPlan(normalized_instruction, color, steps)
+    if target_param:
+        return force_target_color(plan, color)
+    return plan
 
 
 def validate_skill_params(skill: ParsedSkill, params: dict[str, str]) -> bool:
@@ -167,4 +170,3 @@ def _replace_placeholders(value: Any, params: dict[str, str]) -> Any:
     if isinstance(value, list):
         return [_replace_placeholders(item, params) for item in value]
     return value
-

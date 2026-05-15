@@ -206,6 +206,46 @@ outputs/agentos_benchmarks/
 workspace/benchmarks/
 ```
 
+### 1.5 Robosuite / MuJoCo 3D Backend
+
+项目提供可选 robosuite backend，用于把 AgentOS 从 2D fake env 迁移到 3D MuJoCo manipulation。当前环境没有安装 `mujoco` / `robosuite` 时，其它功能和测试不受影响。
+
+先安装可选依赖：
+
+```bash
+pip install mujoco robosuite
+```
+
+验证 robosuite 能 reset / step：
+
+```bash
+python3 scripts/test_robosuite_env.py --task Lift --robot Panda
+```
+
+如需离屏渲染：
+
+```bash
+python3 scripts/test_robosuite_env.py \
+  --task Lift \
+  --robot Panda \
+  --offscreen \
+  --render-output outputs/robosuite_lift.ppm
+```
+
+AgentOS CLI 已预留 driver 选择：
+
+```bash
+python3 scripts/run_agentos.py \
+  "lift the cube" \
+  --driver robosuite \
+  --sim-task Lift \
+  --robot Panda \
+  --planner skill \
+  --skill-path runtime/skills/robosuite_skill.md
+```
+
+当前 robosuite 接入包含 `robosuite_lift_loop` scripted workflow，可完成 `Lift` 的对齐、下探、闭合、上抬和成功检查。它仍然通过 `ACTION.md`、watchdog、validator 和 HAL driver 执行，不绕过 AgentOS 协议。
+
 当前华为 Ascend 服务器上，系统 Python 可能尚未安装 `numpy`、`pytest`、`torch`、`torch_npu`。workspace 初始化不依赖这些包，但 fake manipulation driver 需要 `numpy`，BC/VisionBC 训练需要 PyTorch。
 
 如果使用当前 Docker 环境，项目路径是：

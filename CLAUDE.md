@@ -46,6 +46,10 @@ python scripts/run_agentos.py "pick up the blue block and place it in the bowl" 
 # Multi-episode full AgentOS benchmark
 python scripts/benchmark_agentos.py --planner skill --num-episodes 9 --randomize-layout
 
+# Optional robosuite / MuJoCo backend smoke. Requires optional dependencies.
+python scripts/test_robosuite_env.py --task Lift --robot Panda
+python scripts/run_agentos.py "lift the cube" --driver robosuite --planner skill --skill-path runtime/skills/robosuite_skill.md
+
 # Direct policy debug path
 python scripts/run_agent.py
 
@@ -114,6 +118,8 @@ Key runtime modules:
 Current driver:
 
 - `FakeManipulationDriver` — drives `FakeManipulationEnv` through the AgentOS protocol
+- `RobosuiteDriver` — optional MuJoCo / robosuite backend for 3D manipulation
+- `RobosuiteLiftLoopTool` — scripted 3D Lift workflow through `ACTION.md` and watchdog
 
 ### Tools (`tools/`)
 

@@ -15,6 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from envs.fake_manipulation_env import FakeManipulationConfig, FakeManipulationEnv
+from hal.drivers import load_driver
 from hal.fake_manipulation_driver import FakeManipulationDriver
 from learning.agentos_benchmark_report import (
     AgentOSBenchmarkSummary,
@@ -47,6 +48,9 @@ class AgentOSBenchmarkConfig:
     skill_path: Path | None = None
     record_skill: bool = False
     record_skill_path: Path | None = None
+    driver: str = "fake_manipulation"
+    sim_task: str = "Lift"
+    robot: str = "Panda"
 
 
 def parse_args() -> argparse.Namespace:
@@ -59,6 +63,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--target-colors", default="red,blue,green")
     parser.add_argument("--workspace-root", default="workspace/benchmarks")
     parser.add_argument("--output-dir", default="outputs/agentos_benchmarks")
+    parser.add_argument("--driver", choices=["fake_manipulation", "robosuite"], default="fake_manipulation")
+    parser.add_argument("--sim-task", default="Lift")
+    parser.add_argument("--robot", default="Panda")
     parser.add_argument("--no-write-report", action="store_true")
     parser.add_argument("--skill-path", default=None, help="Optional skill library markdown path for skill planner.")
     parser.add_argument("--record-skill", action="store_true", help="Record successful plans to episode SKILL.md files.")
@@ -80,6 +87,9 @@ def config_from_args(args: argparse.Namespace) -> AgentOSBenchmarkConfig:
         skill_path=PROJECT_ROOT / args.skill_path if args.skill_path else None,
         record_skill=args.record_skill,
         record_skill_path=PROJECT_ROOT / args.record_skill_path if args.record_skill_path else None,
+        driver=args.driver,
+        sim_task=args.sim_task,
+        robot=args.robot,
     )
 
 
@@ -93,13 +103,22 @@ def run_benchmark(config: AgentOSBenchmarkConfig) -> AgentOSBenchmarkSummary:
         instruction = f"pick up the {color} block and place it in the bowl"
         workspace = config.workspace_root / run_id / f"episode_{episode_idx:03d}"
 
-        env_config = FakeManipulationConfig(
-            workspace_low=np.array([-1.0, -1.0], dtype=float),
-            workspace_high=np.array([1.0, 1.0], dtype=float),
-            randomize_layout=config.randomize_layout,
-        )
-        env = FakeManipulationEnv(config=env_config, seed=config.seed + episode_idx)
-        driver = FakeManipulationDriver(env=env)
+        if config.driver == "robosuite":
+            driver = load_driver(
+                "robosuite",
+                task_name=config.sim_task,
+                robot=config.robot,
+                seed=config.seed + episode_idx,
+                has_offscreen_renderer=True,
+            )
+        else:
+            env_config = FakeManipulationConfig(
+                workspace_low=np.array([-1.0, -1.0], dtype=float),
+                workspace_high=np.array([1.0, 1.0], dtype=float),
+                randomize_layout=config.randomize_layout,
+            )
+            env = FakeManipulationEnv(config=env_config, seed=config.seed + episode_idx)
+            driver = FakeManipulationDriver(env=env)
         trace = TraceLogger(workspace / "traces")
 
         plan_start = time.monotonic()
@@ -144,6 +163,7 @@ def run_benchmark(config: AgentOSBenchmarkConfig) -> AgentOSBenchmarkSummary:
     summary = build_benchmark_summary(
         run_id=run_id,
         planner=config.planner,
+        driver=config.driver,
         num_episodes=config.num_episodes,
         max_steps=config.max_steps,
         randomize_layout=config.randomize_layout,
@@ -156,6 +176,7 @@ def run_benchmark(config: AgentOSBenchmarkConfig) -> AgentOSBenchmarkSummary:
         summary = build_benchmark_summary(
             run_id=run_id,
             planner=config.planner,
+            driver=config.driver,
             num_episodes=config.num_episodes,
             max_steps=config.max_steps,
             randomize_layout=config.randomize_layout,

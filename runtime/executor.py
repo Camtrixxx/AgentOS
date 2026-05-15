@@ -14,6 +14,7 @@ from tools.embodied_tools import ReadEnvironmentTool, ResetTaskTool, ScriptedPic
 from tools.evaluation_tools import EvaluateScriptedPolicyTool
 from tools.registry import ToolRegistry
 from tools.render_tools import RenderFakeEnvTool
+from tools.robosuite_tools import RobosuiteLiftLoopTool
 
 
 @dataclass(frozen=True)
@@ -64,7 +65,7 @@ class AgentOSExecutor:
 
         for index, step in enumerate(plan.steps, start=1):
             parameters = dict(step.parameters)
-            if step.tool == "scripted_pick_place_loop":
+            if step.tool in {"scripted_pick_place_loop", "robosuite_lift_loop"}:
                 parameters.setdefault("max_steps", max_steps)
             if step.tool == "render_fake_env" and render_output is not None:
                 parameters.setdefault("output", str(render_output))
@@ -142,7 +143,8 @@ def build_default_registry(
     registry.register(ResetTaskTool(workspace, driver=driver))
     registry.register(StepEnvTool(workspace, driver=driver))
     registry.register(ScriptedPickPlaceLoopTool(workspace, driver=driver, policy=policy))
-    registry.register(RenderFakeEnvTool(workspace))
+    registry.register(RobosuiteLiftLoopTool(workspace, driver=driver))
+    registry.register(RenderFakeEnvTool(workspace, driver=driver))
     registry.register(EvaluateScriptedPolicyTool())
     return registry
 

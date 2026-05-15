@@ -102,6 +102,26 @@ python scripts/benchmark_agentos.py \
   --randomize-layout
 ```
 
+可选 3D 仿真后端验证：
+
+```bash
+python scripts/test_robosuite_env.py --task Lift --robot Panda
+```
+
+`robosuite` / `mujoco` 是可选依赖。当前华为 NPU 环境推荐用 MuJoCo CPU 做物理仿真，把 NPU 留给 VisionBC / VLA 推理；后续迁移 A100 后再接 Isaac Lab 做大规模并行仿真。
+
+运行 robosuite Lift 的 AgentOS 闭环：
+
+```bash
+python scripts/run_agentos.py \
+  "lift the cube" \
+  --driver robosuite \
+  --sim-task Lift \
+  --robot Panda \
+  --planner skill \
+  --skill-path runtime/skills/robosuite_skill.md
+```
+
 运行 direct policy debug 路径：
 
 ```bash
@@ -151,7 +171,7 @@ agent/        policy wrappers and VLA backends
 recorders/    episode recorders and dataset schema
 docs/         architecture, running guide, and reference notes
 envs/         fake manipulation environment and renderer
-hal/          AgentOS driver contracts, driver registry, fake driver, VLA adapter
+hal/          AgentOS driver contracts, driver registry, fake/robosuite drivers, VLA adapter
 learning/     BC / VisionBC / RL models, datasets, training, evaluation reports
 runtime/      workspace protocol, executor, watchdog, action queue, planner, trace
 scripts/      Python entrypoints and shell shortcuts

@@ -17,15 +17,17 @@ class RenderFakeEnvTool:
         self,
         workspace: str | Path | WorkspaceRepository = "workspace",
         output: str | Path = "outputs/fake_env_tool.ppm",
+        driver: Any | None = None,
     ):
         self._repo_params: str | Path | WorkspaceRepository = workspace
         self.output = Path(output)
+        self.driver = driver
 
     def run(self, parameters: dict[str, Any]) -> ToolResponse:
         repo = resolve_repo(self._repo_params, parameters)
         output = Path(parameters.get("output") or self.output)
         repo.initialize()
-        driver = FakeManipulationDriver(seed=int(parameters.get("seed", 0)))
+        driver = self.driver or FakeManipulationDriver(seed=int(parameters.get("seed", 0)))
         driver.load_environment(repo.get_environment())
         image = driver.env.render_rgb()
         output.parent.mkdir(parents=True, exist_ok=True)

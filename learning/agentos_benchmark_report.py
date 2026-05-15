@@ -28,6 +28,7 @@ class AgentOSEpisodeResult:
 class AgentOSBenchmarkSummary:
     run_id: str
     planner: str
+    driver: str
     num_episodes: int
     max_steps: int
     randomize_layout: bool
@@ -50,6 +51,7 @@ def build_benchmark_summary(
     *,
     run_id: str,
     planner: str,
+    driver: str,
     num_episodes: int,
     max_steps: int,
     randomize_layout: bool,
@@ -66,6 +68,7 @@ def build_benchmark_summary(
     return AgentOSBenchmarkSummary(
         run_id=run_id,
         planner=planner,
+        driver=driver,
         num_episodes=num_episodes,
         max_steps=max_steps,
         randomize_layout=randomize_layout,
@@ -114,6 +117,7 @@ def render_benchmark_markdown(summary: AgentOSBenchmarkSummary) -> str:
             "",
             f"- Run ID: `{summary.run_id}`",
             f"- Planner: `{summary.planner}`",
+            f"- Driver: `{summary.driver}`",
             f"- Episodes: `{summary.num_episodes}`",
             f"- Max steps: `{summary.max_steps}`",
             f"- Randomize layout: `{summary.randomize_layout}`",

@@ -13,7 +13,7 @@ from runtime.planner import PlannedStep, Planner, RuleBasedPlanner, TaskPlan
 
 
 SUPPORTED_COLORS = {"red", "blue", "green"}
-WORKFLOW_TOOL_NAMES = {"reset_task", "scripted_pick_place_loop", "render_fake_env"}
+WORKFLOW_TOOL_NAMES = {"reset_task", "scripted_pick_place_loop", "robosuite_lift_loop", "render_fake_env"}
 LOW_LEVEL_PARAMETER_NAMES = {"action", "dx", "dy", "gripper"}
 
 WORKFLOW_TOOLS: list[dict[str, Any]] = [
