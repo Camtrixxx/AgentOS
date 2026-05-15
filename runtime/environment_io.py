@@ -153,3 +153,12 @@ def save_environment_document(path: Path, document: dict[str, Any] | None) -> No
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(dump_environment_document(document), encoding="utf-8")
 
+
+def merge_runtime_state(document: dict[str, Any], runtime_state: dict[str, Any]) -> None:
+    """Merge driver runtime state into an environment document in-place."""
+    if not isinstance(document, dict) or not isinstance(runtime_state, dict):
+        return
+    document.setdefault("runtime", {})
+    document["runtime"].update(to_jsonable(runtime_state))
+    document["updated_at"] = utc_now_iso()
+

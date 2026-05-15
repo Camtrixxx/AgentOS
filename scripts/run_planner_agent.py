@@ -4,19 +4,18 @@ import argparse
 import sys
 from pathlib import Path
 
+import numpy as np
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from hal.fake_manipulation_driver import FakeManipulationDriver
+from agent.scripted_policy import ScriptedPickPlacePolicy
+from envs.fake_manipulation_env import FakeManipulationConfig, FakeManipulationEnv
 from runtime.executor import execute_task_plan
 from runtime.planner import RuleBasedPlanner
 from runtime.trace import TraceLogger
 from runtime.workspace import initialize_workspace
-from tools.embodied_tools import ReadEnvironmentTool, ResetTaskTool, StepEnvTool
-from tools.planner_tools import CreatePlanTool
-from tools.registry import ToolRegistry
-from tools.render_tools import RenderFakeEnvTool
 
 
 def parse_args() -> argparse.Namespace:
@@ -48,18 +47,13 @@ def main() -> None:
         },
     )
 
-    driver = FakeManipulationDriver(
-        seed=args.seed,
-        include_image=False,
+    config = FakeManipulationConfig(
+        workspace_low=np.array([-1.0, -1.0], dtype=float),
+        workspace_high=np.array([1.0, 1.0], dtype=float),
         randomize_layout=args.randomize_layout,
-        max_steps=args.max_steps,
     )
-    registry = ToolRegistry(trace_logger=trace)
-    registry.register(CreatePlanTool(workspace))
-    registry.register(ReadEnvironmentTool(workspace))
-    registry.register(ResetTaskTool(workspace, driver=driver))
-    registry.register(StepEnvTool(workspace, driver=driver))
-    registry.register(RenderFakeEnvTool(workspace, PROJECT_ROOT / args.render_output))
+    env = FakeManipulationEnv(config=config, seed=args.seed)
+    policy = ScriptedPickPlacePolicy()
 
     print("plan:")
     for index, step in enumerate(plan.steps, start=1):
@@ -67,7 +61,8 @@ def main() -> None:
 
     result = execute_task_plan(
         plan,
-        registry=registry,
+        env=env,
+        policy=policy,
         workspace=workspace,
         max_steps=args.max_steps,
         render_output=PROJECT_ROOT / args.render_output,

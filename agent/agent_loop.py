@@ -26,39 +26,37 @@ class RolloutResult:
     success: bool
 
 
-class AgentLoop:
-    """Run policy-environment rollouts and optionally record transitions."""
+def run_episode(
+    env: Env,
+    policy: Policy,
+    *,
+    recorder: Any | None = None,
+    task: Any | None = None,
+    max_steps: int = 10_000,
+) -> RolloutResult:
+    observation = env.reset(task=task) if task is not None else env.reset()
+    if recorder is not None:
+        recorder.start_episode(observation)
 
-    def __init__(self, env: Env, policy: Policy, recorder: Any | None = None):
-        self.env = env
-        self.policy = policy
-        self.recorder = recorder
+    total_reward = 0.0
+    success = False
+    steps = 0
 
-    def run_episode(self, task: Any | None = None, max_steps: int | None = None) -> RolloutResult:
-        observation = self.env.reset(task=task) if task is not None else self.env.reset()
-        if self.recorder is not None:
-            self.recorder.start_episode(observation)
+    for step_idx in range(max_steps):
+        action = policy.act(observation)
+        next_observation, reward, done, info = env.step(action)
+        total_reward += reward
+        steps = step_idx + 1
+        success = bool(info.get("success", False))
 
-        total_reward = 0.0
-        success = False
-        steps = 0
-        limit = max_steps if max_steps is not None else 10_000
+        if recorder is not None:
+            recorder.record_step(observation, action, reward, next_observation, done, info)
 
-        for step_idx in range(limit):
-            action = self.policy.act(observation)
-            next_observation, reward, done, info = self.env.step(action)
-            total_reward += reward
-            steps = step_idx + 1
-            success = bool(info.get("success", False))
+        observation = next_observation
+        if done:
+            break
 
-            if self.recorder is not None:
-                self.recorder.record_step(observation, action, reward, next_observation, done, info)
-
-            observation = next_observation
-            if done:
-                break
-
-        if self.recorder is not None:
-            self.recorder.end_episode({"steps": steps, "total_reward": total_reward, "success": success})
-        return RolloutResult(steps=steps, total_reward=total_reward, success=success)
+    if recorder is not None:
+        recorder.end_episode({"steps": steps, "total_reward": total_reward, "success": success})
+    return RolloutResult(steps=steps, total_reward=total_reward, success=success)
 

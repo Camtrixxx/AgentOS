@@ -127,23 +127,20 @@ bash scripts/sh/99_clean_generated.sh
 ## Project Layout
 
 ```text
-adapters/     observation/action adapters for VLA-style backends
 agent/        scripted, BC, VisionBC, and VLA policy wrappers
 configs/      camera, robot, and safety configs
-control/      safety limiter and fake robot backend
 datasets/     episode recorders and dataset schema
 docs/         project docs and running guide
 envs/         fake manipulation environment
 evaluation/   JSON / Markdown evaluation reports
 examples/     runnable small demos
-kinematics/   IK placeholders
-learning/     BC / VisionBC models, datasets, training, evaluation
-perception/   stereo triangulation
-retargeting/  hand retargeting baseline
+hal/          hardware abstraction: drivers, control, perception, adapters, retargeting
+learning/     BC / VisionBC models, datasets, training, evaluation, RL integration
+runtime/      file-backed workspace protocol, watchdog, executor, planner
 scripts/      Python entrypoints and shell shortcuts
-sim/          future simulator integrations
 tests/        lightweight tests
-vla/          VLA backend protocol and mock backend
+tools/        plug-in tools for the tool-based agent runtime
+vla/          VLA backend protocol, mock, and SmolVLA backend
 ```
 
 ## VLA-Ready Design

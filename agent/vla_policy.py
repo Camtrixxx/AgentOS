@@ -4,7 +4,7 @@ from typing import Any
 
 import numpy as np
 
-from adapters.vla_adapter import FakeEnvVLAAdapter
+from hal.vla_adapter import FakeEnvVLAAdapter
 from vla.base import VLABackend
 from vla.mock_backend import MockVLABackend
 
@@ -13,7 +13,7 @@ class VLAPolicy:
     """Policy wrapper for Vision-Language-Action backends.
 
     The backend can be a mock implementation, a local VLA model, or a remote
-    inference service. The policy keeps the AgentLoop API stable.
+    inference service. The policy keeps the Policy protocol stable.
     """
 
     def __init__(

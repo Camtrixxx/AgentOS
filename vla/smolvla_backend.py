@@ -5,7 +5,7 @@ from typing import Any
 
 import numpy as np
 
-from adapters.vla_adapter import VLAAction, VLAObservation
+from hal.vla_adapter import VLAAction, VLAObservation
 from learning.features import extract_state_features
 from vla.mock_backend import MockVLABackend
 

@@ -109,6 +109,17 @@ class FakeManipulationDriver(BaseDriver):
             info=self.last_info,
         )
 
+    def get_runtime_state(self) -> dict[str, Any]:
+        return {
+            "connected": True,
+            "healthy": True,
+            "step_count": int(self.last_observation.get("step_count", 0)),
+            "target_color": self.env.task.target_color,
+            "last_reward": self.last_reward,
+            "last_done": self.last_done,
+            "last_success": bool(self.last_info.get("success", False)),
+        }
+
     def reset(self, *, instruction: str, target_color: str, receptacle_name: str = "bowl") -> dict[str, Any]:
         task = TaskSpec(instruction=instruction, target_color=target_color, receptacle_name=receptacle_name)
         self.last_observation = self.env.reset(task)

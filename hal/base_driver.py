@@ -1,3 +1,13 @@
+"""
+hal/base_driver.py
+
+Abstract base class for all robot body drivers.
+
+Every hardware or simulation embodiment MUST subclass `BaseDriver` and
+implement the four abstract methods. The Watchdog loads a driver by
+name and interacts with it exclusively through this interface.
+"""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -6,7 +16,7 @@ from typing import Any
 
 
 class BaseDriver(ABC):
-    """Minimal HAL contract for fake and future physical embodiments."""
+    """Contract that every robot body driver must fulfil."""
 
     @abstractmethod
     def get_profile_path(self) -> Path | None:
@@ -25,19 +35,30 @@ class BaseDriver(ABC):
         """Return the current environment document."""
 
     def connect(self) -> bool:
+        """Establish a connection to the embodiment if needed."""
         return True
 
     def disconnect(self) -> None:
-        return None
+        """Close the current connection if the driver maintains one."""
 
     def is_connected(self) -> bool:
+        """Return whether the driver currently considers itself connected."""
         return True
 
     def health_check(self) -> bool:
+        """Run a lightweight connection health check."""
         return self.is_connected()
 
+    def get_runtime_state(self) -> dict[str, Any]:
+        """Return optional runtime state such as nav or connection status.
+
+        Merged into ENVIRONMENT.md after each poll cycle so downstream
+        consumers (Planner, tools) can inspect live state.
+        """
+        return {"connected": self.is_connected(), "healthy": self.health_check()}
+
     def close(self) -> None:
-        return None
+        """Release hardware resources. Override if needed."""
 
     def __enter__(self) -> "BaseDriver":
         self.connect()
@@ -45,4 +66,3 @@ class BaseDriver(ABC):
 
     def __exit__(self, *_exc: object) -> None:
         self.close()
-

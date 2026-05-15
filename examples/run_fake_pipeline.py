@@ -9,10 +9,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from control.fake_robot_backend import FakeRobotBackend
-from control.safety_limiter import SafetyConfig, SafetyLimiter
-from perception.stereo_triangulation import StereoCameraConfig, StereoHandTriangulation
-from retargeting.simple_hand_retargeter import SimpleHandRetargeter
+from hal.fake_robot_backend import FakeRobotBackend
+from hal.safety_limiter import SafetyConfig, SafetyLimiter
+from hal.stereo_triangulation import StereoCameraConfig, StereoHandTriangulation
+from hal.simple_hand_retargeter import SimpleHandRetargeter
 
 
 def make_synthetic_hand() -> np.ndarray:

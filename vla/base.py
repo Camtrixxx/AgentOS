@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from adapters.vla_adapter import VLAAction, VLAObservation
+from hal.vla_adapter import VLAAction, VLAObservation
 
 
 class VLABackend(Protocol):

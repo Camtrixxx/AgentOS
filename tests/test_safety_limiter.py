@@ -1,6 +1,6 @@
 import numpy as np
 
-from control.safety_limiter import SafetyConfig, SafetyLimiter
+from hal.safety_limiter import SafetyConfig, SafetyLimiter
 
 
 def test_limiter_clamps_and_limits_delta():

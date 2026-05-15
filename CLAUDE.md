@@ -68,7 +68,7 @@ python -m pytest tests/test_safety_limiter.py -v   # single test file
 
 ### Agent loop (`agent/agent_loop.py`)
 
-Central orchestration. `AgentLoop(env, policy, recorder?)` runs environment rollouts. All policies implement the `Policy` protocol (single `act(observation) -> np.ndarray` method), and all envs implement `Env` (reset/step). A `recorder` can be attached to capture transitions.
+Central orchestration. `run_episode(env, policy, *, recorder, task, max_steps)` runs environment rollouts. All policies implement the `Policy` protocol (single `act(observation) -> np.ndarray` method), and all envs implement `Env` (reset/step). A `recorder` can be attached to capture transitions.
 
 ### Policies (`agent/`)
 
@@ -80,7 +80,7 @@ Central orchestration. `AgentLoop(env, policy, recorder?)` runs environment roll
 | `VLAPolicy` | `vla_policy.py` | Delegates to a `VLABackend` via `FakeEnvVLAAdapter` |
 | `RLPolicy` | `rl_policy.py` | Wraps scripted/random/SB3 backends behind the Policy protocol |
 
-### VLA-ready interface (`vla/`, `adapters/`)
+### VLA-ready interface (`vla/`, `hal/`)
 
 `VLABackend` is a Protocol with one method: `predict(observation: VLAObservation) -> VLAAction`. `FakeEnvVLAAdapter` translates `FakeManipulationEnv` observations/actions to the VLA contract. Three backends exist:
 - `MockVLABackend` — deterministic mock, always moves toward the target color
@@ -100,13 +100,17 @@ Central orchestration. `AgentLoop(env, policy, recorder?)` runs environment roll
 - `evaluate_policy.py` — unified evaluation entry point for all policy types
 - `devices.py` — resolve `cpu`/`cuda`/`npu`/`auto` torch devices (auto-detects NPU)
 
-### RL integration (`rl/`)
+### RL integration (`learning/`)
 
 `FakeManipulationGymEnv` wraps `FakeManipulationEnv` as a Gymnasium-style env (reset/step/render) without requiring the `gymnasium` package. Used by `scripts/train_rl.py` with stable-baselines3 PPO.
 
 ### HAL — Hardware Abstraction Layer (`hal/`)
 
-`BaseDriver` is an ABC defining the driver contract: `load_environment()`, `execute_action()`, `get_environment()`, plus connect/disconnect/health_check lifecycle methods. `FakeManipulationDriver` implements it over `FakeManipulationEnv` and is the runtime's single point of contact with the environment.
+`BaseDriver` is an ABC defining the driver contract: `load_environment()`, `execute_action()`, `get_environment()`, `get_runtime_state()`, plus connect/disconnect/health_check lifecycle methods. `FakeManipulationDriver` implements it over `FakeManipulationEnv` and is the runtime's single point of contact with the environment.
+
+Drivers are registered in `hal/drivers.py` (`register_driver`, `load_driver`, `list_drivers`). The watchdog merges `get_runtime_state()` (connection, health, step progress) into ENVIRONMENT.md after each poll cycle.
+
+Also contains the teleop-to-control pipeline: `stereo_triangulation.py`, `simple_hand_retargeter.py`, `safety_limiter.py`, `fake_robot_backend.py`, `ik_solver.py`, and the VLA adapter (`vla_adapter.py`).
 
 ### Runtime system (`runtime/`)
 
@@ -115,7 +119,7 @@ A file-backed embodied agent runtime using a workspace of Markdown files as the 
 ```
 workspace/
 ├── ACTION.md       # JSON-fenced action queue; watchdog consumes first pending item
-├── ENVIRONMENT.md  # JSON-fenced environment state (robot, objects, receptacles, episode)
+├── ENVIRONMENT.md  # JSON-fenced environment state (robot, objects, receptacles, episode, runtime)
 ├── EMBODIED.md     # Static driver profile (supported actions, constraints)
 ├── LESSONS.md      # Human-readable failure log for post-mortem
 ├── TASK.md         # Current task state
@@ -126,7 +130,7 @@ workspace/
 
 Key components:
 - **Planner** (`planner.py`) — `RuleBasedPlanner` produces a `TaskPlan` of `PlannedStep`s (reset_task, scripted_pick_place_loop, render)
-- **Executor** (`executor.py`) — runs a `TaskPlan` via `ToolRegistry`, looping policy actions through the watchdog
+- **Executor** (`executor.py`) — runs a `TaskPlan` using `run_episode()` directly with an env and policy, then renders and writes a REPORT.md
 - **Watchdog** (`watchdog.py`) — polls `ACTION.md` for pending actions, validates them via `ActionValidator`, executes through the HAL driver, writes results back
 - **Action queue** (`action_queue.py`) — JSON-fenced Markdown queue with normalize/append/poll/save primitives
 - **Action validator** (`action_validator.py`) — validates action type, parameter shape, workspace bounds, and step delta limits
@@ -147,13 +151,14 @@ Plug-in tools implementing a `Tool` protocol (`name`, `description`, `run(parame
 | `CreatePlanTool` | Writes a `TaskPlan` to `PLAN.md` |
 | `EvaluateScriptedPolicyTool` | Runs scripted policy evaluation |
 
-### Teleop-to-control pipeline
+### Teleop-to-control pipeline (`hal/`)
 
-- `perception/stereo_triangulation.py` — stereo 3D reconstruction from 2D keypoints
-- `retargeting/simple_hand_retargeter.py` — human hand skeleton → robot joint commands
-- `control/safety_limiter.py` — joint limit clamping and delta limiting
-- `control/fake_robot_backend.py` — no-hardware robot backend
-- `kinematics/ik_solver.py` — placeholder IK solver (shape only)
+- `hal/stereo_triangulation.py` — stereo 3D reconstruction from 2D keypoints
+- `hal/simple_hand_retargeter.py` — human hand skeleton → robot joint commands
+- `hal/safety_limiter.py` — joint limit clamping and delta limiting
+- `hal/fake_robot_backend.py` — no-hardware robot backend
+- `hal/ik_solver.py` — placeholder IK solver (shape only)
+- `hal/vla_adapter.py` — observation/action adapters for VLA backends
 
 ### Datasets (`datasets/`)
 
@@ -168,7 +173,7 @@ Plug-in tools implementing a `Tool` protocol (`name`, `description`, `run(parame
 ## Key Design Conventions
 
 - All modules use `__future__ import annotations` and type hints throughout
-- `sys.path.insert(0, str(PROJECT_ROOT))` at the top of entry points; imports use project-root-relative paths (e.g., `from agent.agent_loop import AgentLoop`)
+- `sys.path.insert(0, str(PROJECT_ROOT))` at the top of entry points; imports use project-root-relative paths (e.g., `from agent.agent_loop import run_episode`)
 - Configuration via frozen dataclasses (e.g., `FakeManipulationConfig`, `SafetyConfig`)
 - Seeds are passed explicitly to constructors (no global RNG state)
 - The `Policy` and `Env` protocols in `agent_loop.py` accept any duck-typed object, so policies and envs don't formally subclass anything

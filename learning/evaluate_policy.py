@@ -10,7 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from agent.agent_loop import AgentLoop
+from agent.agent_loop import run_episode
 from agent.bc_policy import BCPolicy
 from agent.rl_policy import RLPolicy
 from agent.scripted_policy import ScriptedPickPlacePolicy
@@ -64,7 +64,7 @@ def main() -> None:
         )
         env = FakeManipulationEnv(config=config, seed=episode_idx)
         policy = make_policy(args)
-        result = AgentLoop(env, policy).run_episode(task=task, max_steps=args.max_steps)
+        result = run_episode(env, policy, task=task, max_steps=args.max_steps)
         successes += int(result.success)
         total_steps += result.steps
         total_reward += result.total_reward

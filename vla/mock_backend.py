@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from adapters.vla_adapter import VLAAction, VLAObservation
+from hal.vla_adapter import VLAAction, VLAObservation
 
 
 class MockVLABackend:

@@ -7,8 +7,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from adapters.vla_adapter import FakeEnvVLAAdapter, VLAAction
-from agent.agent_loop import AgentLoop
+from hal.vla_adapter import FakeEnvVLAAdapter, VLAAction
+from agent.agent_loop import run_episode
 from agent.vla_policy import VLAPolicy
 from envs.fake_manipulation_env import FakeManipulationConfig, FakeManipulationEnv, TaskSpec
 from vla.smolvla_backend import SmolVLABackend
@@ -33,7 +33,7 @@ def test_mock_vla_policy_solves_randomized_layout():
     policy = VLAPolicy()
     task = TaskSpec("pick up the blue block and place it in the bowl", "blue")
 
-    result = AgentLoop(env, policy).run_episode(task=task, max_steps=100)
+    result = run_episode(env, policy, task=task, max_steps=100)
 
     assert result.success
 

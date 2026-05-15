@@ -10,7 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from agent.agent_loop import AgentLoop
+from agent.agent_loop import run_episode
 from agent.scripted_policy import ScriptedPickPlacePolicy
 from datasets.vision_episode_recorder import VisionEpisodeRecorder, VisionEpisodeRecorderConfig
 from envs.fake_manipulation_env import FakeManipulationConfig, FakeManipulationEnv, TaskSpec
@@ -46,7 +46,7 @@ def main() -> None:
         recorder = VisionEpisodeRecorder(
             VisionEpisodeRecorderConfig(output_dir=PROJECT_ROOT / args.output_dir)
         )
-        result = AgentLoop(env, policy, recorder=recorder).run_episode(task=task, max_steps=args.max_steps)
+        result = run_episode(env, policy, recorder=recorder, task=task, max_steps=args.max_steps)
         successes += int(result.success)
         print(
             f"episode={episode_idx} target={task.target_color} "

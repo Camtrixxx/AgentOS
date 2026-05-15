@@ -8,7 +8,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from agent.rl_policy import RLPolicy
-from rl.gym_fake_manipulation import FakeManipulationGymEnv
+from learning.gym_fake_manipulation import FakeManipulationGymEnv
 
 
 def test_fake_manipulation_gym_env_step():

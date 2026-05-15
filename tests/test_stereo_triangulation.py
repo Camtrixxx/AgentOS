@@ -8,7 +8,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from examples.run_fake_pipeline import make_synthetic_hand, project
-from perception.stereo_triangulation import StereoCameraConfig, StereoHandTriangulation
+from hal.stereo_triangulation import StereoCameraConfig, StereoHandTriangulation
 
 
 def test_stereo_triangulation_reconstructs_synthetic_points():

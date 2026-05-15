@@ -5,7 +5,7 @@ from typing import Any
 
 import numpy as np
 
-from agent.agent_loop import AgentLoop
+from agent.agent_loop import run_episode
 from agent.scripted_policy import ScriptedPickPlacePolicy
 from envs.fake_manipulation_env import FakeManipulationConfig, FakeManipulationEnv, TaskSpec
 from evaluation.report import EpisodeEval, EvaluationSummary, infer_failure_reason, write_evaluation_report
@@ -44,7 +44,7 @@ class EvaluateScriptedPolicyTool:
                 randomize_layout=randomize_layout,
             )
             env = FakeManipulationEnv(config=config, seed=episode_idx)
-            result = AgentLoop(env, ScriptedPickPlacePolicy()).run_episode(task=task, max_steps=max_steps)
+            result = run_episode(env, ScriptedPickPlacePolicy(), task=task, max_steps=max_steps)
             successes += int(result.success)
             total_steps += result.steps
             total_reward += result.total_reward
