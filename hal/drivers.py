@@ -11,30 +11,38 @@ from typing import Any
 
 from hal.base_driver import BaseDriver
 from hal.fake_manipulation_driver import FakeManipulationDriver
+from runtime.registry import Registry
 
-_registry: dict[str, type[BaseDriver]] = {}
+
+class DriverRegistry(Registry[type[BaseDriver]]):
+    """Registry of driver classes keyed by driver name."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._init_builtins()
+
+    def _init_builtins(self) -> None:
+        self.register("fake_manipulation", FakeManipulationDriver)
+
+    def load_driver(self, name: str, **kwargs: Any) -> BaseDriver:
+        cls = self.get(name)
+        if cls is None:
+            available = ", ".join(self.list_names())
+            raise KeyError(f"Unknown driver {name!r}. Available: {available}")
+        return cls(**kwargs)
 
 
-def _init_registry() -> None:
-    if _registry:
-        return
-    _registry["fake_manipulation"] = FakeManipulationDriver
+# Module-level singleton for backward compatibility
+driver_registry = DriverRegistry()
 
 
 def register_driver(name: str, driver_cls: type[BaseDriver]) -> None:
-    _init_registry()
-    _registry[name] = driver_cls
+    driver_registry.register(name, driver_cls)
 
 
 def load_driver(name: str, **kwargs: Any) -> BaseDriver:
-    _init_registry()
-    cls = _registry.get(name)
-    if cls is None:
-        available = ", ".join(sorted(_registry.keys()))
-        raise KeyError(f"Unknown driver {name!r}. Available: {available}")
-    return cls(**kwargs)
+    return driver_registry.load_driver(name, **kwargs)
 
 
 def list_drivers() -> list[str]:
-    _init_registry()
-    return sorted(_registry.keys())
+    return driver_registry.list_names()

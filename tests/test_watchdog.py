@@ -6,20 +6,20 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from hal.fake_manipulation_driver import FakeManipulationDriver
-from runtime.action_queue import append_action, load_action_document, save_action_document
-from runtime.environment_io import load_environment_document
+from runtime.action_queue import append_action
+from runtime.repository import WorkspaceRepository
 from runtime.watchdog import poll_once
-from runtime.workspace import initialize_workspace
 
 
 def test_watchdog_executes_first_pending_action(tmp_path):
-    paths = initialize_workspace(tmp_path / "workspace")
+    repo = WorkspaceRepository(tmp_path / "workspace")
+    repo.initialize()
     document = append_action(None, action_type="env_step", parameters={"action": [0.02, 0.0, -1.0]})
-    save_action_document(paths.action, document)
+    repo.save_actions(document)
 
-    result = poll_once(FakeManipulationDriver(seed=0), paths)
-    actions = load_action_document(paths.action)["actions"]
-    environment = load_environment_document(paths.environment)
+    result = poll_once(FakeManipulationDriver(seed=0), repo)
+    actions = repo.get_actions()["actions"]
+    environment = repo.get_environment()
 
     assert result is not None
     assert result["success"]
@@ -28,8 +28,9 @@ def test_watchdog_executes_first_pending_action(tmp_path):
 
 
 def test_workspace_initialization_creates_plan_report_files(tmp_path):
-    paths = initialize_workspace(tmp_path / "workspace")
+    repo = WorkspaceRepository(tmp_path / "workspace")
+    repo.initialize()
 
-    assert paths.plan.exists()
-    assert paths.report.exists()
-    assert paths.skill.exists()
+    assert repo.paths.plan.exists()
+    assert repo.paths.report.exists()
+    assert repo.paths.skill.exists()

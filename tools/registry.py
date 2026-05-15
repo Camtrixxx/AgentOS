@@ -3,24 +3,25 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from runtime.registry import Registry
 from runtime.trace import TraceLogger
 from tools.base import Tool
 from tools.response import ToolResponse
 
 
-class ToolRegistry:
+class ToolRegistry(Registry[Tool]):
     def __init__(self, trace_logger: TraceLogger | None = None):
-        self._tools: dict[str, Tool] = {}
+        super().__init__()
         self.trace_logger = trace_logger
 
     def register(self, tool: Tool) -> None:
-        self._tools[tool.name] = tool
+        super().register(tool.name, tool)
 
     def get(self, name: str) -> Tool | None:
-        return self._tools.get(name)
+        return self._items.get(name)
 
     def list_tools(self) -> list[dict[str, str]]:
-        return [{"name": tool.name, "description": tool.description} for tool in self._tools.values()]
+        return [{"name": tool.name, "description": tool.description} for tool in self._items.values()]
 
     def run(self, name: str, parameters: dict[str, Any] | None = None) -> ToolResponse:
         params = parameters or {}

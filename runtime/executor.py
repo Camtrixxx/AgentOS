@@ -4,13 +4,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from agent.agent_loop import Policy, run_episode
-from envs.fake_manipulation_env import TaskSpec
-from runtime.lessons import append_lesson
-from runtime.plan_io import save_execution_report, save_plan_document
-from runtime.planner import TaskPlan
-from runtime.trace import TraceLogger
-from runtime.workspace import WorkspacePaths, initialize_workspace
+from envs.fake_manipulation_env import FakeManipulationEnv, TaskSpec
 from envs.ppm_writer import write_ppm
+from runtime.planner import TaskPlan
+from runtime.repository import WorkspaceRepository
+from runtime.trace import TraceLogger
 
 
 @dataclass(frozen=True)
@@ -33,10 +31,11 @@ def execute_task_plan(
     render_output: str | Path | None = None,
     trace: TraceLogger | None = None,
 ) -> ExecutionResult:
-    paths = initialize_workspace(workspace)
-    save_plan_document(paths.plan, plan)
+    repo = WorkspaceRepository(workspace)
+    repo.initialize()
+    repo.save_plan(plan)
     if trace is not None:
-        trace.log("plan_saved", {"path": str(paths.plan)})
+        trace.log("plan_saved", {"path": str(repo.paths.plan)})
 
     task = TaskSpec(instruction=plan.instruction, target_color=plan.target_color)
     result = run_episode(env, policy, task=task, max_steps=max_steps)
@@ -57,14 +56,17 @@ def execute_task_plan(
         "last_reward": result.total_reward,
         "render_path": render_path,
         "trace_path": str(trace.path) if trace is not None else None,
-        "plan_path": str(paths.plan),
+        "plan_path": str(repo.paths.plan),
         "step_records": [],
     }
-    save_execution_report(paths.report, report)
+    repo.save_report(report)
     if not result.success:
-        _record_failure(paths, f"Task ended without success after {result.steps} steps")
+        _record_failure(repo, f"Task ended without success after {result.steps} steps")
     if trace is not None:
-        trace.log("execution_report_saved", {"path": str(paths.report), "success": result.success, "steps": result.steps})
+        trace.log(
+            "execution_report_saved",
+            {"path": str(repo.paths.report), "success": result.success, "steps": result.steps},
+        )
 
     return ExecutionResult(
         success=result.success,
@@ -72,9 +74,9 @@ def execute_task_plan(
         last_reward=result.total_reward,
         render_path=render_path,
         trace_path=str(trace.path) if trace is not None else None,
-        report_path=str(paths.report),
+        report_path=str(repo.paths.report),
     )
 
 
-def _record_failure(paths: WorkspacePaths, details: str) -> None:
-    append_lesson(paths.lessons, title="Execution issue", details=details)
+def _record_failure(repo: WorkspaceRepository, details: str) -> None:
+    repo.append_lesson(title="Execution issue", details=details)
