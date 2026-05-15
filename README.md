@@ -129,7 +129,7 @@ bash scripts/sh/99_clean_generated.sh
 ```text
 agent/        policy wrappers, VLA backends (protocol, mock, SmolVLA)
 configs/      camera, robot, and safety configs
-datasets/     episode recorders and dataset schema
+recorders/    episode recorders and dataset schema
 docs/         project docs and running guide
 envs/         fake manipulation environment
 hal/          hardware abstraction: drivers, control, perception, adapters, retargeting
@@ -191,7 +191,7 @@ bash scripts/sh/99_clean_generated.sh
 - [docs/running_guide.md](docs/running_guide.md): 怎么运行每个模块
 - [docs/project_overview.md](docs/project_overview.md): 项目整体介绍和设计目标
 - [docs/embodied_agent_upgrade.md](docs/embodied_agent_upgrade.md): Agent / BC / VisionBC / VLA-ready 详细演进
-- [datasets/schema.md](datasets/schema.md): demonstration 数据格式
+- [recorders/schema.md](recorders/schema.md): demonstration 数据格式
 
 ## Resume Angle
 

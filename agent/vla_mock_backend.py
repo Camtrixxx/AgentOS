@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from envs.task_utils import find_object_by_color, parse_target_color
 from hal.vla_adapter import VLAAction, VLAObservation
 
 
@@ -21,8 +22,8 @@ class MockVLABackend:
 
     def predict(self, observation: VLAObservation) -> VLAAction:
         state = observation.state
-        target_color = self._parse_target_color(observation.instruction)
-        target_name = self._find_object_by_color(state["objects"], target_color)
+        target_color = parse_target_color(observation.instruction)
+        target_name = find_object_by_color(state["objects"], target_color)
         target_pos = np.asarray(state["objects"][target_name]["position"], dtype=float)
         bowl_pos = np.asarray(state["receptacles"]["bowl"], dtype=float)
         ee_pos = np.asarray(state["ee_position"], dtype=float)
@@ -51,19 +52,4 @@ class MockVLABackend:
     @staticmethod
     def _distance(a: np.ndarray, b: np.ndarray) -> float:
         return float(np.linalg.norm(a - b))
-
-    @staticmethod
-    def _find_object_by_color(objects: dict, color: str) -> str:
-        for name, obj in objects.items():
-            if obj["color"] == color:
-                return name
-        raise ValueError(f"No object with color {color!r}")
-
-    @staticmethod
-    def _parse_target_color(instruction: str) -> str:
-        instruction = instruction.lower()
-        for color in ("red", "blue", "green"):
-            if color in instruction:
-                return color
-        return "red"
 

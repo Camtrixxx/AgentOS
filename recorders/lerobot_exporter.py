@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import shutil
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -198,23 +197,7 @@ def _load_manifest_frames(frames_path: Path) -> list[list[dict[str, Any]]]:
 
 
 def _import_lerobot_dataset() -> Any:
-    """Import LeRobotDataset despite this repo's local `datasets` package name.
-
-    Hugging Face LeRobot imports the external `datasets` package. This project
-    also has a top-level `datasets/` package, so native export temporarily
-    removes the project root from import resolution before importing LeRobot.
-    """
-
-    project_root = Path(__file__).resolve().parents[1]
-    original_path = list(sys.path)
-    local_datasets_module = sys.modules.get("datasets")
     try:
-        sys.modules.pop("datasets", None)
-        sys.path = [
-            path
-            for path in sys.path
-            if path not in ("", str(project_root), str(project_root.resolve()))
-        ]
         from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
         return LeRobotDataset
@@ -223,10 +206,6 @@ def _import_lerobot_dataset() -> Any:
             "LeRobot is not installed or could not be imported. "
             "Use manifest export now, or run native export with the LeRobot virtualenv."
         ) from exc
-    finally:
-        sys.path = original_path
-        if local_datasets_module is not None:
-            sys.modules["datasets"] = local_datasets_module
 
 
 def _get_lerobot_version() -> str:

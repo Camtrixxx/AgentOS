@@ -160,7 +160,7 @@ Plug-in tools implementing a `Tool` protocol (`name`, `description`, `run(parame
 - `hal/ik_solver.py` — placeholder IK solver (shape only)
 - `hal/vla_adapter.py` — observation/action adapters for VLA backends
 
-### Datasets (`datasets/`)
+### Recorders (`recorders/`)
 
 - `episode_recorder.py` / `vision_episode_recorder.py` — record episodes to `data/`
 - `inspector.py` — validate dataset quality (missing images, bad shapes, success rate, action stats)

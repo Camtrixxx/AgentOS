@@ -12,7 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from agent.agent_loop import run_episode
 from agent.scripted_policy import ScriptedPickPlacePolicy
-from datasets.episode_recorder import EpisodeRecorder, EpisodeRecorderConfig
+from recorders.episode_recorder import EpisodeRecorder, EpisodeRecorderConfig
 from envs.fake_manipulation_env import FakeManipulationConfig, FakeManipulationEnv, TaskSpec
 
 

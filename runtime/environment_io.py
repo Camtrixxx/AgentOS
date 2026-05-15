@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from envs.task_utils import parse_target_color
+
 
 ENVIRONMENT_SCHEMA_VERSION = "embodied_lab.environment.v1"
 FENCE_OPEN = "```json"
@@ -105,11 +107,7 @@ def environment_doc_from_observation(
 
 
 def infer_target_color(observation: dict[str, Any]) -> str:
-    instruction = str(observation.get("instruction", "")).lower()
-    for color in ("red", "blue", "green"):
-        if color in instruction:
-            return color
-    return "red"
+    return parse_target_color(str(observation.get("instruction", "")))
 
 
 def parse_environment_markdown(content: str) -> dict[str, Any]:

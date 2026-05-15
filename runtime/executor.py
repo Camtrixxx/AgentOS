@@ -10,7 +10,7 @@ from runtime.plan_io import save_execution_report, save_plan_document
 from runtime.planner import TaskPlan
 from runtime.trace import TraceLogger
 from runtime.workspace import WorkspacePaths, initialize_workspace
-from scripts.render_fake_env import write_ppm
+from envs.ppm_writer import write_ppm
 
 
 @dataclass(frozen=True)

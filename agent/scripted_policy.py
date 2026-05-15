@@ -5,6 +5,8 @@ from typing import Any
 
 import numpy as np
 
+from envs.task_utils import find_object_by_color, parse_target_color
+
 
 @dataclass(frozen=True)
 class ScriptedPolicyConfig:
@@ -19,8 +21,8 @@ class ScriptedPickPlacePolicy:
         self.config = config or ScriptedPolicyConfig()
 
     def act(self, observation: dict[str, Any]) -> np.ndarray:
-        target_color = self._parse_target_color(observation["instruction"])
-        target_name = self._find_object_by_color(observation, target_color)
+        target_color = parse_target_color(observation["instruction"])
+        target_name = find_object_by_color(observation["objects"], target_color)
         target_pos = observation["objects"][target_name]["position"]
         bowl_pos = observation["receptacles"]["bowl"]
         ee_pos = observation["ee_position"]
@@ -49,18 +51,4 @@ class ScriptedPickPlacePolicy:
     def _distance(a: np.ndarray, b: np.ndarray) -> float:
         return float(np.linalg.norm(np.asarray(a, dtype=float) - np.asarray(b, dtype=float)))
 
-    @staticmethod
-    def _find_object_by_color(observation: dict[str, Any], color: str) -> str:
-        for name, obj in observation["objects"].items():
-            if obj["color"] == color:
-                return name
-        raise ValueError(f"No object with color {color!r}")
-
-    @staticmethod
-    def _parse_target_color(instruction: str) -> str:
-        instruction = instruction.lower()
-        for color in ("red", "blue", "green"):
-            if color in instruction:
-                return color
-        return "red"
 

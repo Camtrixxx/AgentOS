@@ -7,8 +7,8 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from datasets.lerobot_exporter import export_vision_demos_to_lerobot_jsonl
-from datasets.lerobot_exporter import export_vision_demos_to_lerobot_native
+from recorders.lerobot_exporter import export_vision_demos_to_lerobot_jsonl
+from recorders.lerobot_exporter import export_vision_demos_to_lerobot_native
 
 
 def parse_args() -> argparse.Namespace:

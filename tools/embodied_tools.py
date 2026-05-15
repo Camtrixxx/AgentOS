@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from envs.task_utils import parse_target_color
 from hal.fake_manipulation_driver import FakeManipulationDriver
 from runtime.action_validator import validate_action
 from runtime.action_queue import append_action, load_action_document, save_action_document
@@ -105,7 +106,7 @@ class ResetTaskTool:
         self.watchdog_tool = RunWatchdogOnceTool(workspace, driver=driver)
 
     def run(self, parameters: dict[str, Any]) -> ToolResponse:
-        target_color = str(parameters.get("target_color") or _infer_target_color(str(parameters.get("instruction") or "")))
+        target_color = str(parameters.get("target_color") or parse_target_color(str(parameters.get("instruction") or "")))
         instruction = str(parameters.get("instruction") or f"pick up the {target_color} block and place it in the bowl")
         receptacle_name = str(parameters.get("receptacle_name") or "bowl")
         workspace = Path(parameters.get("workspace") or self.workspace)
@@ -149,11 +150,3 @@ class StepEnvTool:
         if queued.error is not None:
             return queued
         return self.watchdog_tool.run({"workspace": workspace})
-
-
-def _infer_target_color(instruction: str) -> str:
-    lowered = instruction.lower()
-    for color in ("red", "blue", "green"):
-        if color in lowered:
-            return color
-    return "red"

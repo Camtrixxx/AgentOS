@@ -4,17 +4,9 @@ from typing import Any
 
 import numpy as np
 
+from envs.task_utils import COLORS, find_object_by_color, parse_target_color
 
-COLORS = ("red", "blue", "green")
 FEATURE_DIM = 15
-
-
-def parse_target_color(instruction: str) -> str:
-    instruction = instruction.lower()
-    for color in COLORS:
-        if color in instruction:
-            return color
-    return "red"
 
 
 def extract_state_features(observation: dict[str, Any]) -> np.ndarray:
@@ -33,7 +25,7 @@ def extract_state_features(observation: dict[str, Any]) -> np.ndarray:
 
     instruction = observation["instruction"]
     target_color = parse_target_color(instruction)
-    target_name = find_object_by_color(observation, target_color)
+    target_name = find_object_by_color(observation["objects"], target_color)
 
     ee_pos = np.asarray(observation["ee_position"], dtype=np.float32)
     target_pos = np.asarray(observation["objects"][target_name]["position"], dtype=np.float32)
@@ -57,10 +49,3 @@ def extract_state_features(observation: dict[str, Any]) -> np.ndarray:
     if features.shape != (FEATURE_DIM,):
         raise ValueError(f"Expected feature shape ({FEATURE_DIM},), got {features.shape}")
     return features
-
-
-def find_object_by_color(observation: dict[str, Any], color: str) -> str:
-    for name, obj in observation["objects"].items():
-        if obj["color"] == color:
-            return name
-    raise ValueError(f"No object with color {color!r}")

@@ -6,7 +6,7 @@ from typing import Any
 from hal.fake_manipulation_driver import FakeManipulationDriver
 from runtime.environment_io import load_environment_document
 from runtime.workspace import initialize_workspace
-from scripts.render_fake_env import write_ppm
+from envs.ppm_writer import write_ppm
 from tools.response import ToolResponse
 
 
