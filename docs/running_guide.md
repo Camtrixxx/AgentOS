@@ -125,6 +125,24 @@ python3 scripts/run_agentos.py \
 
 skill library 只表达 workflow-level tools，例如 `reset_task`、`scripted_pick_place_loop`、`render_fake_env`。它不直接写 `[dx, dy, gripper]`，低层动作仍然由 tool、watchdog、validator 和 HAL driver 处理。
 
+成功执行后，可以把这次 plan 录制为 workspace-local skill。默认写入当前 workspace 的 `SKILL.md`，不会修改仓库内置的 `runtime/skills/default_skill.md`：
+
+```bash
+python3 scripts/run_agentos.py \
+  "pick up the blue block and place it in the bowl" \
+  --planner skill \
+  --record-skill
+```
+
+如果需要写到指定 skill library：
+
+```bash
+python3 scripts/run_agentos.py \
+  "pick up the green block and place it in the bowl" \
+  --record-skill \
+  --record-skill-path workspace/my_skills/SKILL.md
+```
+
 ### 1.3 DeepSeek LLM Planner
 
 `run_agentos.py` 默认使用 deterministic `RuleBasedPlanner`。如果配置了 DeepSeek API key，可以让 LLM 生成 workflow-level `TaskPlan`：
@@ -163,6 +181,15 @@ python3 scripts/benchmark_agentos.py \
   --planner skill \
   --num-episodes 9 \
   --randomize-layout
+```
+
+benchmark 也支持录制成功 plan。未指定 `--record-skill-path` 时，每个 episode 会写入自己的 workspace `SKILL.md`，避免实验互相污染：
+
+```bash
+python3 scripts/benchmark_agentos.py \
+  --planner skill \
+  --num-episodes 9 \
+  --record-skill
 ```
 
 对比 deterministic planner 与 DeepSeek planner：

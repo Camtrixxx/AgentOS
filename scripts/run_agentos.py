@@ -33,6 +33,8 @@ def parse_args() -> argparse.Namespace:
         help="Planner backend. Defaults to deterministic rule planner.",
     )
     parser.add_argument("--skill-path", default=None, help="Optional skill library markdown path for skill planner.")
+    parser.add_argument("--record-skill", action="store_true", help="Record a successful plan to workspace SKILL.md.")
+    parser.add_argument("--record-skill-path", default=None, help="Optional output path for recorded skills.")
     return parser.parse_args()
 
 
@@ -66,6 +68,14 @@ def main() -> None:
         max_steps=args.max_steps,
         render_output=PROJECT_ROOT / args.render_output,
     )
+
+    if result.success and args.record_skill:
+        from runtime.skill_recorder import record_plan_as_skill
+
+        record_path = PROJECT_ROOT / args.record_skill_path if args.record_skill_path else workspace / "SKILL.md"
+        added = record_plan_as_skill(plan, args.instruction, record_path)
+        print(f"skill_recorded={str(added).lower()}")
+        print(f"skill_path={record_path}")
 
     print(f"success={result.success}")
     print(f"steps={result.steps}")

@@ -6,6 +6,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from runtime.planner import RuleBasedPlanner
+from runtime.skill_recorder import record_plan_as_skill
 from runtime.skill_planner import ParsedSkill, SkillLibraryPlanner, instantiate_skill, match_skill, parse_skills
 
 
@@ -131,3 +132,36 @@ def test_invalid_skill_param_value_does_not_match():
     )
 
     assert match_skill(skill, "pick up the yellow block and place it in the bowl") is None
+
+
+def test_record_plan_as_skill_appends_parameterized_library(tmp_path):
+    skill_path = tmp_path / "SKILL.md"
+    skill_path.write_text("# Skill\n\nNo reusable workflow recorded yet.\n", encoding="utf-8")
+    instruction = "pick up the blue block and place it in the bowl"
+    plan = RuleBasedPlanner().plan(instruction, target_color="blue")
+
+    added = record_plan_as_skill(plan, instruction, skill_path)
+
+    assert added is True
+    skills = parse_skills(skill_path.read_text(encoding="utf-8"))
+    assert len(skills) == 1
+    assert "pick_place" in skills
+    skill = skills["pick_place"]
+    assert skill.pattern == "pick up the {color} block and place it in the bowl"
+    reset_step = next(step for step in skill.steps if step["tool"] == "reset_task")
+    assert reset_step["parameters"]["target_color"] == "{color}"
+    assert "blue" not in reset_step["parameters"]["instruction"]
+    assert "{color}" in reset_step["parameters"]["instruction"]
+
+
+def test_record_plan_as_skill_deduplicates_by_pattern(tmp_path):
+    skill_path = tmp_path / "SKILL.md"
+    skill_path.write_text(SKILL_MD, encoding="utf-8")
+    instruction = "pick up the red block and place it in the bowl"
+    plan = RuleBasedPlanner().plan(instruction, target_color="red")
+
+    added = record_plan_as_skill(plan, instruction, skill_path)
+
+    assert added is False
+    skills = parse_skills(skill_path.read_text(encoding="utf-8"))
+    assert len(skills) == 1

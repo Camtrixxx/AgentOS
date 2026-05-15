@@ -45,6 +45,8 @@ class AgentOSBenchmarkConfig:
     write_report: bool = True
     run_id: str | None = None
     skill_path: Path | None = None
+    record_skill: bool = False
+    record_skill_path: Path | None = None
 
 
 def parse_args() -> argparse.Namespace:
@@ -59,6 +61,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", default="outputs/agentos_benchmarks")
     parser.add_argument("--no-write-report", action="store_true")
     parser.add_argument("--skill-path", default=None, help="Optional skill library markdown path for skill planner.")
+    parser.add_argument("--record-skill", action="store_true", help="Record successful plans to episode SKILL.md files.")
+    parser.add_argument("--record-skill-path", default=None, help="Optional shared output path for recorded skills.")
     return parser.parse_args()
 
 
@@ -74,6 +78,8 @@ def config_from_args(args: argparse.Namespace) -> AgentOSBenchmarkConfig:
         output_dir=PROJECT_ROOT / args.output_dir,
         write_report=not args.no_write_report,
         skill_path=PROJECT_ROOT / args.skill_path if args.skill_path else None,
+        record_skill=args.record_skill,
+        record_skill_path=PROJECT_ROOT / args.record_skill_path if args.record_skill_path else None,
     )
 
 
@@ -108,6 +114,11 @@ def run_benchmark(config: AgentOSBenchmarkConfig) -> AgentOSBenchmarkSummary:
             max_steps=config.max_steps,
             render_output=render_output,
         )
+        if result.success and config.record_skill:
+            from runtime.skill_recorder import record_plan_as_skill
+
+            record_path = config.record_skill_path or workspace / "SKILL.md"
+            record_plan_as_skill(plan, instruction, record_path)
         duration_ms = (time.monotonic() - exec_start) * 1000.0
         failure_reason = infer_agentos_failure_reason(result.success, result.steps, config.max_steps)
 

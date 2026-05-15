@@ -84,6 +84,15 @@ python scripts/run_agentos.py \
 
 默认 skill 定义在 `runtime/skills/default_skill.md`。如需试验自定义 workflow，可传入 `--skill-path path/to/SKILL.md`。
 
+把成功执行的 plan 录制到当前 workspace 的 `SKILL.md`：
+
+```bash
+python scripts/run_agentos.py \
+  "pick up the blue block and place it in the bowl" \
+  --planner skill \
+  --record-skill
+```
+
 运行完整 AgentOS 多回合 benchmark：
 
 ```bash
