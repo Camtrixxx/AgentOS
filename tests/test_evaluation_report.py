@@ -5,7 +5,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from evaluation.report import EpisodeEval, EvaluationSummary, write_evaluation_report
+from learning.evaluation_report import EpisodeEval, EvaluationSummary, write_evaluation_report
 
 
 def test_write_evaluation_report(tmp_path):

@@ -15,7 +15,7 @@ No real robot or simulator required. No package manager — pure Python scripts 
 
 ```bash
 bash scripts/sh/00_smoke_test.sh          # full sanity check
-python examples/run_fake_pipeline.py       # teleop → control demo
+python scripts/run_fake_pipeline.py        # teleop → control demo
 python scripts/run_agent.py                # scripted embodied agent
 python scripts/render_fake_env.py --output outputs/fake_env.ppm  # RGB render
 ```
@@ -80,7 +80,7 @@ Central orchestration. `run_episode(env, policy, *, recorder, task, max_steps)` 
 | `VLAPolicy` | `vla_policy.py` | Delegates to a `VLABackend` via `FakeEnvVLAAdapter` |
 | `RLPolicy` | `rl_policy.py` | Wraps scripted/random/SB3 backends behind the Policy protocol |
 
-### VLA-ready interface (`vla/`, `hal/`)
+### VLA-ready interface (`agent/`, `hal/`)
 
 `VLABackend` is a Protocol with one method: `predict(observation: VLAObservation) -> VLAAction`. `FakeEnvVLAAdapter` translates `FakeManipulationEnv` observations/actions to the VLA contract. Three backends exist:
 - `MockVLABackend` — deterministic mock, always moves toward the target color

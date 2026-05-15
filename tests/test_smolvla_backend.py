@@ -8,7 +8,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from hal.vla_adapter import VLAObservation
-from vla.smolvla_backend import SmolVLABackend
+from agent.vla_smolvla_backend import SmolVLABackend
 
 
 def test_smolvla_backend_dry_run_predicts_action():

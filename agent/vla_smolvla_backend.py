@@ -7,7 +7,7 @@ import numpy as np
 
 from hal.vla_adapter import VLAAction, VLAObservation
 from learning.features import extract_state_features
-from vla.mock_backend import MockVLABackend
+from agent.vla_mock_backend import MockVLABackend
 
 
 class SmolVLABackend:

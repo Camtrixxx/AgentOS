@@ -5,8 +5,8 @@ from typing import Any
 import numpy as np
 
 from hal.vla_adapter import FakeEnvVLAAdapter
-from vla.base import VLABackend
-from vla.mock_backend import MockVLABackend
+from agent.vla_base import VLABackend
+from agent.vla_mock_backend import MockVLABackend
 
 
 class VLAPolicy:

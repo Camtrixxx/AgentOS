@@ -17,7 +17,7 @@ from agent.scripted_policy import ScriptedPickPlacePolicy
 from agent.vla_policy import VLAPolicy
 from agent.vision_bc_policy import VisionBCPolicy
 from envs.fake_manipulation_env import FakeManipulationConfig, FakeManipulationEnv, TaskSpec
-from evaluation.report import (
+from learning.evaluation_report import (
     EpisodeEval,
     EvaluationSummary,
     infer_failure_reason,
@@ -123,7 +123,7 @@ def make_policy(args: argparse.Namespace):
         if args.vla_backend == "mock":
             return VLAPolicy()
         if args.vla_backend in {"smolvla", "smolvla_dry_run"}:
-            from vla.smolvla_backend import SmolVLABackend
+            from agent.vla_smolvla_backend import SmolVLABackend
 
             return VLAPolicy(
                 backend=SmolVLABackend(

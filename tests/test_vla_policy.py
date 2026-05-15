@@ -11,7 +11,7 @@ from hal.vla_adapter import FakeEnvVLAAdapter, VLAAction
 from agent.agent_loop import run_episode
 from agent.vla_policy import VLAPolicy
 from envs.fake_manipulation_env import FakeManipulationConfig, FakeManipulationEnv, TaskSpec
-from vla.smolvla_backend import SmolVLABackend
+from agent.vla_smolvla_backend import SmolVLABackend
 
 
 def test_vla_adapter_converts_action():

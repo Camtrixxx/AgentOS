@@ -79,7 +79,7 @@ mock VLA randomized evaluation report
 运行遥操作到控制 demo：
 
 ```bash
-python examples/run_fake_pipeline.py
+python scripts/run_fake_pipeline.py
 ```
 
 运行具身 Agent：
@@ -127,20 +127,17 @@ bash scripts/sh/99_clean_generated.sh
 ## Project Layout
 
 ```text
-agent/        scripted, BC, VisionBC, and VLA policy wrappers
+agent/        policy wrappers, VLA backends (protocol, mock, SmolVLA)
 configs/      camera, robot, and safety configs
 datasets/     episode recorders and dataset schema
 docs/         project docs and running guide
 envs/         fake manipulation environment
-evaluation/   JSON / Markdown evaluation reports
-examples/     runnable small demos
 hal/          hardware abstraction: drivers, control, perception, adapters, retargeting
-learning/     BC / VisionBC models, datasets, training, evaluation, RL integration
+learning/     BC / VisionBC models, datasets, training, evaluation reports, RL integration
 runtime/      file-backed workspace protocol, watchdog, executor, planner
 scripts/      Python entrypoints and shell shortcuts
 tests/        lightweight tests
 tools/        plug-in tools for the tool-based agent runtime
-vla/          VLA backend protocol, mock, and SmolVLA backend
 ```
 
 ## VLA-Ready Design

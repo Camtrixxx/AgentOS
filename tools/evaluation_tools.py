@@ -8,7 +8,7 @@ import numpy as np
 from agent.agent_loop import run_episode
 from agent.scripted_policy import ScriptedPickPlacePolicy
 from envs.fake_manipulation_env import FakeManipulationConfig, FakeManipulationEnv, TaskSpec
-from evaluation.report import EpisodeEval, EvaluationSummary, infer_failure_reason, write_evaluation_report
+from learning.evaluation_report import EpisodeEval, EvaluationSummary, infer_failure_reason, write_evaluation_report
 from tools.response import ToolResponse
 
 
