@@ -40,6 +40,12 @@ python scripts/run_agentos.py "pick up the green block and place it in the bowl"
 export DEEPSEEK_API_KEY="sk-..."
 python scripts/run_agentos.py "pick up the blue block and place it in the bowl" --planner deepseek
 
+# Skill library planner backed by runtime/skills/default_skill.md
+python scripts/run_agentos.py "pick up the blue block and place it in the bowl" --planner skill
+
+# Multi-episode full AgentOS benchmark
+python scripts/benchmark_agentos.py --planner skill --num-episodes 9 --randomize-layout
+
 # Direct policy debug path
 python scripts/run_agent.py
 
@@ -93,6 +99,8 @@ Key runtime modules:
 - `file_watcher.py` — inotify/mtime file change watcher for watchdog wakeups
 - `action_validator.py` — validates action schema, step delta, workspace bounds
 - `environment_io.py` — converts observations to/from `ENVIRONMENT.md`
+- `skill_planner.py` — markdown-backed workflow templates for repeatable plans
+- `llm_planner.py` — optional DeepSeek workflow planner with local fallback
 
 ### HAL (`hal/`)
 
@@ -175,6 +183,7 @@ workspace/
 - Keep `scripts/run_agentos.py` as the primary AgentOS entry point.
 - Keep `scripts/run_agent.py` as the direct policy debug path.
 - Do not add new execution paths that bypass `ACTION.md` for online runtime behavior.
+- `SkillLibraryPlanner` reads JSON skill libraries from Markdown. Keep skills workflow-level.
 - `DeepSeekPlanner` is optional. No API key means fallback to `RuleBasedPlanner`.
 - LLM planners may only emit workflow-level `TaskPlan` JSON. They must not emit low-level actions.
 - Offline learning may use direct `env.step()` loops for efficiency.

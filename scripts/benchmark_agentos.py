@@ -44,11 +44,12 @@ class AgentOSBenchmarkConfig:
     output_dir: Path = Path("outputs/agentos_benchmarks")
     write_report: bool = True
     run_id: str | None = None
+    skill_path: Path | None = None
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run multi-episode AgentOS benchmark.")
-    parser.add_argument("--planner", choices=["rule", "deepseek"], default="rule")
+    parser.add_argument("--planner", choices=["rule", "skill", "deepseek"], default="rule")
     parser.add_argument("--num-episodes", type=int, default=30)
     parser.add_argument("--max-steps", type=int, default=80)
     parser.add_argument("--randomize-layout", action="store_true")
@@ -57,6 +58,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--workspace-root", default="workspace/benchmarks")
     parser.add_argument("--output-dir", default="outputs/agentos_benchmarks")
     parser.add_argument("--no-write-report", action="store_true")
+    parser.add_argument("--skill-path", default=None, help="Optional skill library markdown path for skill planner.")
     return parser.parse_args()
 
 
@@ -71,12 +73,13 @@ def config_from_args(args: argparse.Namespace) -> AgentOSBenchmarkConfig:
         workspace_root=PROJECT_ROOT / args.workspace_root,
         output_dir=PROJECT_ROOT / args.output_dir,
         write_report=not args.no_write_report,
+        skill_path=PROJECT_ROOT / args.skill_path if args.skill_path else None,
     )
 
 
 def run_benchmark(config: AgentOSBenchmarkConfig) -> AgentOSBenchmarkSummary:
     run_id = config.run_id or _new_run_id()
-    planner = _build_planner(config.planner)
+    planner = _build_planner(config.planner, skill_path=config.skill_path)
     episodes: list[AgentOSEpisodeResult] = []
 
     for episode_idx in range(config.num_episodes):
@@ -186,9 +189,13 @@ def main() -> None:
     print_summary(summary)
 
 
-def _build_planner(name: str) -> Planner:
+def _build_planner(name: str, *, skill_path: Path | None = None) -> Planner:
     if name == "deepseek":
         return DeepSeekPlanner()
+    if name == "skill":
+        from runtime.skill_planner import SkillLibraryPlanner
+
+        return SkillLibraryPlanner(skill_path=skill_path)
     return RuleBasedPlanner()
 
 

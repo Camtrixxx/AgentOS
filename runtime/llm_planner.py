@@ -8,6 +8,7 @@ from typing import Any
 from openai import OpenAI
 
 from runtime.plan_io import plan_from_dict
+from runtime.plan_utils import force_target_color
 from runtime.planner import PlannedStep, Planner, RuleBasedPlanner, TaskPlan
 
 
@@ -78,7 +79,7 @@ class DeepSeekPlanner:
             payload = self._parse_json(raw_text)
             plan = plan_from_dict(payload)
             if target_color is not None:
-                plan = self._force_target_color(plan, target_color)
+                plan = force_target_color(plan, target_color)
             self._validate_plan(plan, target_color=target_color)
             self.last_fallback_reason = None
             return plan
@@ -203,27 +204,6 @@ Rules:
         if max_steps_int < 1 or max_steps_int > 500:
             raise PlanValidationError("invalid_parameters")
 
-    def _force_target_color(self, plan: TaskPlan, target_color: str) -> TaskPlan:
-        instruction = _rewrite_instruction_color(plan.instruction, target_color)
-        forced_steps: list[PlannedStep] = []
-        for step in plan.steps:
-            parameters = dict(step.parameters)
-            if step.tool == "reset_task":
-                parameters["target_color"] = target_color
-                parameters["receptacle_name"] = "bowl"
-                parameters["instruction"] = _rewrite_instruction_color(
-                    str(parameters.get("instruction") or instruction),
-                    target_color,
-                )
-            forced_steps.append(
-                PlannedStep(
-                    tool=step.tool,
-                    parameters=parameters,
-                    description=step.description,
-                )
-            )
-        return TaskPlan(instruction=instruction, target_color=target_color, steps=forced_steps)
-
     def _fallback(
         self,
         reason: str,
@@ -236,13 +216,3 @@ Rules:
         suffix = f": {details}" if details else ""
         print(f"DeepSeekPlanner: {reason}{suffix}, falling back to RuleBasedPlanner")
         return self.fallback.plan(instruction, target_color=target_color)
-
-
-def _rewrite_instruction_color(instruction: str, target_color: str) -> str:
-    text = instruction.strip()
-    if not text:
-        return f"pick up the {target_color} block and place it in the bowl"
-    updated = re.sub(r"\b(red|blue|green)\b", target_color, text, count=1, flags=re.IGNORECASE)
-    if updated == text and target_color not in text.lower():
-        return f"pick up the {target_color} block and place it in the bowl"
-    return updated

@@ -104,7 +104,28 @@ python3 scripts/run_agentos.py "pick up the blue block and place it in the bowl"
   --render-output outputs/agentos_blue.ppm
 ```
 
-### 1.2 DeepSeek LLM Planner
+### 1.2 Skill Library Planner
+
+`SkillLibraryPlanner` 从 Markdown skill library 读取 workflow 模板，把自然语言任务映射为 `TaskPlan`。默认 skill 文件是 `runtime/skills/default_skill.md`：
+
+```bash
+python3 scripts/run_agentos.py \
+  "pick up the blue block and place it in the bowl" \
+  --planner skill
+```
+
+使用自定义 skill library：
+
+```bash
+python3 scripts/run_agentos.py \
+  "pick up the green block and place it in the bowl" \
+  --planner skill \
+  --skill-path runtime/skills/default_skill.md
+```
+
+skill library 只表达 workflow-level tools，例如 `reset_task`、`scripted_pick_place_loop`、`render_fake_env`。它不直接写 `[dx, dy, gripper]`，低层动作仍然由 tool、watchdog、validator 和 HAL driver 处理。
+
+### 1.3 DeepSeek LLM Planner
 
 `run_agentos.py` 默认使用 deterministic `RuleBasedPlanner`。如果配置了 DeepSeek API key，可以让 LLM 生成 workflow-level `TaskPlan`：
 
@@ -131,6 +152,31 @@ workspace/.../PLAN.md      # Planner 生成的任务计划
 workspace/.../REPORT.md    # 执行报告
 workspace/.../LESSONS.md   # 失败或被 Critic 拒绝的经验记录
 outputs/traces/*.jsonl     # 工具调用和执行事件 trace
+```
+
+### 1.4 AgentOS Benchmark
+
+多回合 benchmark 会跑完整在线路径：Planner → Tools → `ACTION.md` → Watchdog → HAL driver，并汇总成功率、平均步数、耗时、fallback 分布和失败原因：
+
+```bash
+python3 scripts/benchmark_agentos.py \
+  --planner skill \
+  --num-episodes 9 \
+  --randomize-layout
+```
+
+对比 deterministic planner 与 DeepSeek planner：
+
+```bash
+python3 scripts/benchmark_agentos.py --planner rule --num-episodes 9
+python3 scripts/benchmark_agentos.py --planner deepseek --num-episodes 9
+```
+
+报告默认写入：
+
+```text
+outputs/agentos_benchmarks/
+workspace/benchmarks/
 ```
 
 当前华为 Ascend 服务器上，系统 Python 可能尚未安装 `numpy`、`pytest`、`torch`、`torch_npu`。workspace 初始化不依赖这些包，但 fake manipulation driver 需要 `numpy`，BC/VisionBC 训练需要 PyTorch。

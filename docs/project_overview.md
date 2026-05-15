@@ -23,7 +23,7 @@
 
 | 层级 | 当前模块 |
 | --- | --- |
-| 任务规划 | `runtime/planner.py` |
+| 任务规划 | `runtime/planner.py`, `runtime/skill_planner.py`, `runtime/llm_planner.py` |
 | 工具执行 | `tools/`, `tools/registry.py` |
 | 动作协议 | `runtime/action_queue.py`, `workspace/ACTION.md` |
 | 环境状态 | `runtime/environment_io.py`, `workspace/ENVIRONMENT.md` |
@@ -45,7 +45,7 @@
 scripts/run_agentos.py
         |
         v
-RuleBasedPlanner
+RuleBasedPlanner / SkillLibraryPlanner / DeepSeekPlanner
         |
         v
 workspace/PLAN.md
@@ -130,6 +130,18 @@ FakeManipulationEnv
 python scripts/run_agentos.py "pick up the red block and place it in the bowl"
 ```
 
+使用 skill library planner：
+
+```bash
+python scripts/run_agentos.py "pick up the blue block and place it in the bowl" --planner skill
+```
+
+多回合 AgentOS benchmark：
+
+```bash
+python scripts/benchmark_agentos.py --planner skill --num-episodes 9
+```
+
 direct policy debug：
 
 ```bash
@@ -151,7 +163,7 @@ envs/         fake manipulation environment
 hal/          driver contracts, registry, fake driver, VLA adapter
 learning/     training, evaluation, BC/VisionBC/RL utilities
 recorders/    episode recorders and LeRobot exporter
-runtime/      workspace protocol, executor, watchdog, action queue, planner
+runtime/      workspace protocol, executor, watchdog, action queue, planners
 scripts/      runtime and experiment entrypoints
 tests/        regression tests
 tools/        ToolRegistry and runtime tools
@@ -159,7 +171,5 @@ tools/        ToolRegistry and runtime tools
 
 ## 下一步方向
 
-- 增加 AgentOS benchmark，统计多回合 success rate、latency、action failure count。
-- 把 `SKILL.md` 升级成可解析 workflow library。
 - 增加真实 simulator driver，例如 ManiSkill / Isaac / MuJoCo。
 - 增加 remote VLA provider 和 human approval gate。

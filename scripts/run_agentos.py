@@ -28,10 +28,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--render-output", default="outputs/agentos_env.ppm")
     parser.add_argument(
         "--planner",
-        choices=["rule", "deepseek"],
+        choices=["rule", "skill", "deepseek"],
         default="rule",
         help="Planner backend. Defaults to deterministic rule planner.",
     )
+    parser.add_argument("--skill-path", default=None, help="Optional skill library markdown path for skill planner.")
     return parser.parse_args()
 
 
@@ -52,6 +53,10 @@ def main() -> None:
         from runtime.llm_planner import DeepSeekPlanner
 
         planner = DeepSeekPlanner()
+    elif args.planner == "skill":
+        from runtime.skill_planner import SkillLibraryPlanner
+
+        planner = SkillLibraryPlanner(skill_path=args.skill_path)
     else:
         planner = RuleBasedPlanner()
     plan = planner.plan(args.instruction, target_color=args.target_color)

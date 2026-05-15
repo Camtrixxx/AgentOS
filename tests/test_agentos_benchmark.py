@@ -76,6 +76,25 @@ def test_benchmark_output_structure(tmp_path):
     assert "AgentOS Benchmark Report" in md_path.read_text(encoding="utf-8")
 
 
+def test_benchmark_skill_planner_one_episode(tmp_path):
+    summary = run_benchmark(
+        AgentOSBenchmarkConfig(
+            planner="skill",
+            num_episodes=1,
+            max_steps=80,
+            target_colors=("blue",),
+            workspace_root=tmp_path / "workspace",
+            output_dir=tmp_path / "outputs",
+            write_report=False,
+            run_id="skill_run",
+        )
+    )
+
+    assert summary.planner == "skill"
+    assert summary.success_rate == 1.0
+    assert summary.episodes[0].target_color == "blue"
+
+
 def test_parse_target_colors_rejects_unknown_color():
     try:
         parse_target_colors("red,yellow")

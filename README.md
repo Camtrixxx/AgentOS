@@ -74,6 +74,25 @@ python scripts/run_agentos.py \
 
 没有 `DEEPSEEK_API_KEY` 时，DeepSeek planner 会自动 fallback 到 deterministic `RuleBasedPlanner`。LLM 只生成 workflow-level `TaskPlan`，不会直接输出低层动作。
 
+使用可复用 skill library 作为 Planner：
+
+```bash
+python scripts/run_agentos.py \
+  "pick up the blue block and place it in the bowl" \
+  --planner skill
+```
+
+默认 skill 定义在 `runtime/skills/default_skill.md`。如需试验自定义 workflow，可传入 `--skill-path path/to/SKILL.md`。
+
+运行完整 AgentOS 多回合 benchmark：
+
+```bash
+python scripts/benchmark_agentos.py \
+  --planner skill \
+  --num-episodes 9 \
+  --randomize-layout
+```
+
 运行 direct policy debug 路径：
 
 ```bash
