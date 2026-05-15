@@ -8,7 +8,7 @@
 cd /workspace/hyh/embodied-teleop-control-lab
 ```
 
-当前项目不需要真实机器人即可运行。默认使用 fake environment、fake robot backend 和本地数据。
+当前项目不需要真实机器人即可运行。默认使用 fake manipulation environment、AgentOS workspace 和本地数据。
 
 ## 1. 一键 Smoke Test
 
@@ -20,8 +20,8 @@ bash scripts/sh/00_smoke_test.sh
 
 它会依次运行：
 
-1. 遥操作到控制管线 demo。
-2. scripted embodied agent。
+1. AgentOS runtime 闭环。
+2. direct scripted embodied agent。
 3. fake 环境 RGB 渲染。
 4. mock VLA 随机布局评估并生成报告。
 
@@ -91,26 +91,17 @@ python3 scripts/run_agentos.py "pick up the red block and place it in the bowl"
 docker exec heyuhang-dl bash -lc '
 cd /workspace/hyh/embodied-teleop-control-lab
 python scripts/run_agentos.py "pick up the red block and place it in the bowl" \
-  --workspace workspace/tool_agent_smoke \
-  --render-output outputs/tool_agent_smoke.ppm
+  --workspace workspace/agentos_smoke \
+  --render-output outputs/agentos_smoke.ppm
 '
 ```
 
-运行规则 Planner + Critic Agent。它会先把自然语言任务转成计划，再让 Critic 校验每个动作：
+也可以直接换任务、workspace 和输出路径：
 
 ```bash
-python3 scripts/run_planner_agent.py "pick up the blue block and place it in the bowl"
-```
-
-在 Docker 中运行：
-
-```bash
-docker exec heyuhang-dl bash -lc '
-cd /workspace/hyh/embodied-teleop-control-lab
-python scripts/run_planner_agent.py "pick up the blue block and place it in the bowl" \
-  --workspace workspace/planner_agent_smoke \
-  --render-output outputs/planner_agent_smoke.ppm
-'
+python3 scripts/run_agentos.py "pick up the blue block and place it in the bowl" \
+  --workspace workspace/agentos_blue \
+  --render-output outputs/agentos_blue.ppm
 ```
 
 运行后重点查看：
@@ -142,36 +133,7 @@ ASCEND_RT_VISIBLE_DEVICES=4,5,6,7 python learning/train_vision_bc.py \
 '
 ```
 
-## 2. 遥操作到控制管线
-
-命令：
-
-```bash
-python examples/run_fake_pipeline.py
-```
-
-功能：
-
-```text
-synthetic 3D hand
--> stereo projection
--> triangulation
--> hand retargeting
--> safety limiter
--> FakeRobotBackend
-```
-
-你会看到：
-
-```text
-reconstruction_error_m ...
-safe_command [...]
-robot_frame_id 1
-```
-
-这个 demo 对应项目里的早期机器人控制主线。
-
-## 3. Embodied Agent Demo
+## 2. Embodied Agent Demo
 
 运行 scripted agent：
 
@@ -201,7 +163,7 @@ language instruction
 -> success / failure
 ```
 
-## 4. RGB Render
+## 3. RGB Render
 
 导出 fake 环境预览图：
 
@@ -217,9 +179,9 @@ outputs/fake_env.ppm
 
 这张图是 top-down RGB observation，后续 VisionBC / VLA 都可以使用类似输入。
 
-## 5. State BC: 采集、训练、评估
+## 4. State BC: 采集、训练、评估
 
-### 5.1 采集 state demonstrations
+### 4.1 采集 state demonstrations
 
 ```bash
 bash scripts/sh/01_collect_state_demos.sh
@@ -237,7 +199,7 @@ python scripts/collect_demo.py --num-episodes 60 --output-dir data/demos
 data/demos/episode_xxxxxx/
 ```
 
-### 5.2 训练 state BC
+### 4.2 训练 state BC
 
 ```bash
 bash scripts/sh/02_train_state_bc.sh
@@ -259,7 +221,7 @@ python learning/train_bc.py \
 checkpoints/bc_policy.pt
 ```
 
-### 5.3 评估 state BC
+### 4.3 评估 state BC
 
 ```bash
 python learning/evaluate_policy.py \
@@ -275,11 +237,11 @@ python learning/evaluate_policy.py \
 outputs/eval_reports/
 ```
 
-## 6. VisionBC: 随机布局视觉模仿学习
+## 5. VisionBC: 随机布局视觉模仿学习
 
 这是当前项目最推荐展示的学习链路。
 
-### 6.1 采集随机布局视觉 demonstrations
+### 5.1 采集随机布局视觉 demonstrations
 
 ```bash
 bash scripts/sh/03_collect_vision_demos_random.sh
@@ -304,7 +266,7 @@ data/vision_demos_random/episode_xxxxxx/
 └── arrays.npz
 ```
 
-### 6.2 训练随机布局 VisionBC
+### 5.2 训练随机布局 VisionBC
 
 ```bash
 bash scripts/sh/04_train_vision_bc_random.sh
@@ -326,7 +288,7 @@ python learning/train_vision_bc.py \
 checkpoints/vision_bc_random_policy.pt
 ```
 
-### 6.3 评估随机布局 VisionBC
+### 5.3 评估随机布局 VisionBC
 
 ```bash
 bash scripts/sh/05_eval_vision_bc_random.sh
@@ -350,7 +312,7 @@ python learning/evaluate_policy.py \
 outputs/eval_reports/
 ```
 
-## 7. VLA-Ready Mock Backend
+## 6. VLA-Ready Mock Backend
 
 当前项目已经具备 VLA 接口层，但还没有接真实大模型。
 
@@ -389,7 +351,7 @@ observation
 predict(observation: VLAObservation) -> VLAAction
 ```
 
-### 7.1 SmolVLA Bridge
+### 6.1 SmolVLA Bridge
 
 训练前先检查数据质量：
 
@@ -429,7 +391,7 @@ ASCEND_RT_VISIBLE_DEVICES=4,5,6,7 python learning/evaluate_policy.py \
   --device npu
 ```
 
-### 7.2 Reinforcement Learning
+### 6.2 Reinforcement Learning
 
 先 smoke-test Gym-style fake env wrapper：
 
@@ -465,7 +427,7 @@ python scripts/benchmark_policies.py \
   --output-dir outputs/policy_benchmark
 ```
 
-## 8. Evaluation Reports
+## 7. Evaluation Reports
 
 所有 policy 都可以用同一个评估入口：
 
@@ -494,7 +456,7 @@ outputs/eval_reports/
 - average reward
 - 每个 episode 的成功/失败情况
 
-## 9. 常用环境变量
+## 8. 常用环境变量
 
 快捷脚本支持用环境变量覆盖默认参数。
 
@@ -506,7 +468,7 @@ EPOCHS=40 bash scripts/sh/04_train_vision_bc_random.sh
 CHECKPOINT=checkpoints/vision_bc_random_policy.pt bash scripts/sh/05_eval_vision_bc_random.sh
 ```
 
-## 10. 生成文件说明
+## 9. 生成文件说明
 
 以下目录是运行后生成的，本地存在但不会进入 Git：
 

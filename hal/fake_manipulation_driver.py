@@ -22,6 +22,7 @@ class FakeManipulationDriver(BaseDriver):
         max_steps: int = 80,
         env: FakeManipulationEnv | None = None,
     ):
+        super().__init__()
         self.config = FakeManipulationConfig(
             workspace_low=np.array([-1.0, -1.0], dtype=float),
             workspace_high=np.array([1.0, 1.0], dtype=float),
@@ -35,6 +36,7 @@ class FakeManipulationDriver(BaseDriver):
         self.last_reward = 0.0
         self.last_done = False
         self.last_info: dict[str, Any] = {"success": False}
+        self.connect()
 
     def get_profile_path(self) -> Path | None:
         return None
@@ -87,10 +89,8 @@ class FakeManipulationDriver(BaseDriver):
             self.last_info = dict(last_info) if isinstance(last_info, dict) else {"success": False}
 
         self.last_observation = self.env._observation()
-        if not self.env.objects or not self.env.receptacles:
-            self.reset(instruction=instruction, target_color=target_color, receptacle_name=receptacle_name)
 
-    def execute_action(self, action_type: str, parameters: dict[str, Any]) -> dict[str, Any]:
+    def _execute_action(self, action_type: str, parameters: dict[str, Any]) -> dict[str, Any]:
         if action_type == "reset":
             return self._execute_reset(parameters)
         if action_type == "env_step":
@@ -123,8 +123,9 @@ class FakeManipulationDriver(BaseDriver):
 
     def get_runtime_state(self) -> dict[str, Any]:
         return {
-            "connected": True,
-            "healthy": True,
+            "connected": self.is_connected(),
+            "healthy": self.health_check(),
+            "driver_state": self.state.value,
             "capabilities": self.get_capabilities(),
             "step_count": int(self.last_observation.get("step_count", 0)),
             "target_color": self.env.task.target_color,

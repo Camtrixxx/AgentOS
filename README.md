@@ -1,95 +1,72 @@
-# Embodied Teleop Control Lab
+# Embodied AgentOS Lab
 
-一个 simulation-first 的具身智能学习项目，用来从零搭建：
+一个 simulation-first 的具身 AgentOS 项目，用来验证：
 
 ```text
-teleoperation/control -> embodied agent loop -> imitation learning -> vision policy -> VLA-ready interface
+language task
+-> planner
+-> tools
+-> ACTION.md
+-> watchdog + safety validator
+-> HAL driver
+-> ENVIRONMENT.md
+-> report / trace / lessons
 ```
 
-当前项目不依赖真实机器人即可运行。它包含 fake manipulation 环境、RGB observation、demonstration collection、BC / VisionBC 训练、随机化布局评估、evaluation report，以及可替换的 VLA backend 接口。
+项目最初来自 teleop-control lab 原型，现在已经收敛为 file-backed embodied AgentOS runtime。早期 synthetic teleop demo 已从主线移除，相关原始资料保留在 `docs/reference/`，作为未来 human-input provider 的参考。
 
 ## What It Does
 
-项目目前有两条主线。
+当前主线是一个可审计、可恢复、模型与执行层解耦的具身运行时：
 
-第一条是遥操作到控制管线：
+- file-backed workspace protocol: `ACTION.md`、`ENVIRONMENT.md`、`PLAN.md`、`REPORT.md`
+- `AgentOSExecutor` 通过 `ToolRegistry` 执行计划步骤
+- `AppendActionTool` 把动作写入 `ACTION.md`
+- `watchdog` 监听 action queue，校验后通过 HAL driver 执行
+- `BaseDriver` 提供状态机、capabilities、runtime state 和 CQRS 协议边界
+- `FakeManipulationDriver` 用 fake pick-and-place 环境验证完整闭环
+- BC / VisionBC / RL / VLA policy 作为可插拔能力和离线学习路径
 
-```text
-synthetic hand keypoints
--> stereo triangulation
--> hand retargeting
--> safety limiter
--> fake robot backend
-```
-
-第二条是 file-backed 具身 AgentOS 闭环：
-
-```text
-language instruction
--> planner
--> tool registry
--> ACTION.md action queue
--> watchdog + safety critic
--> HAL driver
--> ENVIRONMENT.md state
--> REPORT.md / trace
-```
-
-已经实现的能力：
-
-- 双目手部 3D 重建 demo
-- 手部 retargeting baseline
-- safety limiter 和 fake robot backend
-- 语言条件 pick-and-place fake 环境
-- RGB render 和 image observation
-- scripted expert policy
-- state BC imitation learning
-- VisionBC imitation learning
-- 随机化布局训练和评估
-- JSON / Markdown evaluation report
-- VLA-ready adapter 和 mock VLA backend
-- file-backed ACTION / ENVIRONMENT / PLAN / REPORT runtime
-- watchdog + HAL driver 安全执行链路
+默认环境不依赖真实机器人即可运行。
 
 ## Quick Start
 
-进入项目：
-
 ```bash
 cd /workspace/hyh/embodied-teleop-control-lab
-```
-
-最快确认项目能跑：
-
-```bash
 bash scripts/sh/00_smoke_test.sh
 ```
 
-它会运行：
+主 AgentOS 入口：
 
-```text
-teleop/control demo
-scripted embodied agent
-RGB render
-mock VLA randomized evaluation report
+```bash
+python scripts/run_agentos.py "pick up the red block and place it in the bowl"
 ```
 
-详细运行说明见：
+运行后重点查看：
 
-[docs/running_guide.md](docs/running_guide.md)
+```text
+workspace/.../ACTION.md       action queue and results
+workspace/.../ENVIRONMENT.md  latest runtime state
+workspace/.../PLAN.md         planner output
+workspace/.../REPORT.md       execution summary
+outputs/traces/*.jsonl        tool/runtime trace
+```
 
 ## Common Commands
 
-运行遥操作到控制 demo：
+运行 AgentOS 闭环：
 
 ```bash
-python scripts/run_fake_pipeline.py
+python scripts/run_agentos.py \
+  "pick up the green block and place it in the bowl" \
+  --workspace workspace/agentos_demo \
+  --render-output outputs/agentos_demo.ppm
 ```
 
-运行具身 Agent：
+运行 direct policy debug 路径：
 
 ```bash
-python scripts/run_agentos.py
+python scripts/run_agent.py
 ```
 
 导出 RGB 环境图：
@@ -131,22 +108,21 @@ bash scripts/sh/99_clean_generated.sh
 ## Project Layout
 
 ```text
-agent/        policy wrappers, VLA backends (protocol, mock, SmolVLA)
-configs/      camera, robot, and safety configs
+agent/        policy wrappers and VLA backends
 recorders/    episode recorders and dataset schema
-docs/         project docs and running guide
-envs/         fake manipulation environment
-hal/          hardware abstraction: drivers, control, perception, adapters, retargeting
-learning/     BC / VisionBC models, datasets, training, evaluation reports, RL integration
-runtime/      file-backed workspace protocol, watchdog, executor, planner
+docs/         architecture, running guide, and reference notes
+envs/         fake manipulation environment and renderer
+hal/          AgentOS driver contracts, driver registry, fake driver, VLA adapter
+learning/     BC / VisionBC / RL models, datasets, training, evaluation reports
+runtime/      workspace protocol, executor, watchdog, action queue, planner, trace
 scripts/      Python entrypoints and shell shortcuts
-tests/        lightweight tests
-tools/        plug-in tools for the tool-based agent runtime
+tests/        regression tests
+tools/        plug-in tools for the AgentOS runtime
 ```
 
 ## VLA-Ready Design
 
-真实 VLA 模型还没有接入，但接口已经准备好：
+VLA models plug in behind the same policy boundary:
 
 ```text
 FakeManipulationEnv observation
@@ -182,23 +158,16 @@ predict(observation: VLAObservation) -> VLAAction
 data/
 outputs/
 checkpoints/
-```
-
-如果磁盘空间不足，可以清理：
-
-```bash
-bash scripts/sh/99_clean_generated.sh
+workspace/
 ```
 
 ## Documentation
 
-- [docs/running_guide.md](docs/running_guide.md): 怎么运行每个模块
-- [docs/project_overview.md](docs/project_overview.md): 项目整体介绍和设计目标
-- [docs/embodied_agent_upgrade.md](docs/embodied_agent_upgrade.md): Agent / BC / VisionBC / VLA-ready 详细演进
+- [docs/running_guide.md](docs/running_guide.md): 怎么运行主要模块
+- [docs/project_overview.md](docs/project_overview.md): 项目定位和架构说明
+- [docs/architecture_diagram.md](docs/architecture_diagram.md): AgentOS runtime 数据流
 - [recorders/schema.md](recorders/schema.md): demonstration 数据格式
 
 ## Resume Angle
 
-一句话介绍：
-
-> Built a simulation-first embodied intelligence lab with stereo hand reconstruction, safety-constrained control, language-conditioned fake manipulation, demonstration collection, BC/VisionBC training, randomized evaluation, and a VLA-ready backend interface.
+> Built a simulation-first embodied AgentOS runtime with file-backed action/state protocols, a watchdog-driven HAL execution loop, driver state management, policy/VLA boundaries, offline imitation learning pipelines, and auditable reports/traces.

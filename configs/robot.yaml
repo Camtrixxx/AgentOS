@@ -1,9 +1,0 @@
-fake_hand:
-  joint_names:
-    - thumb
-    - index
-    - middle
-    - ring
-    - little
-    - spread
-

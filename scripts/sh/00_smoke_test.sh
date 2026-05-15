@@ -3,10 +3,13 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-echo "[1/4] Teleop/control pipeline"
-python examples/run_fake_pipeline.py
+echo "[1/4] AgentOS runtime"
+python scripts/run_agentos.py \
+  "pick up the red block and place it in the bowl" \
+  --workspace workspace/smoke_agentos \
+  --render-output outputs/smoke_agentos.ppm
 
-echo "[2/4] Scripted embodied agent"
+echo "[2/4] Direct scripted agent"
 python scripts/run_agent.py
 
 echo "[3/4] RGB render preview"
@@ -21,4 +24,3 @@ python learning/evaluate_policy.py \
   --max-steps 100 \
   --write-report \
   --report-dir outputs/eval_reports_smoke
-

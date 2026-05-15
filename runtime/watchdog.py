@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import time
 from pathlib import Path
 from typing import Any
 
-from hal.base_driver import BaseDriver
+from hal.base_driver import DriverStateError, RuntimeDriver
 from runtime.action_queue import (
     first_pending_action,
     mark_action_finished,
@@ -12,13 +11,17 @@ from runtime.action_queue import (
 )
 from runtime.action_validator import validate_action
 from runtime.environment_io import merge_runtime_state
+from runtime.file_watcher import FileWatcher
 from runtime.repository import WorkspaceRepository
 
 
-def poll_once(driver: BaseDriver, repo: WorkspaceRepository) -> dict[str, Any] | None:
+def poll_once(driver: RuntimeDriver, repo: WorkspaceRepository) -> dict[str, Any] | None:
     """Execute the first pending action and update workspace files."""
 
-    healthy = driver.health_check()
+    try:
+        healthy = driver.health_check()
+    except DriverStateError as exc:
+        raise RuntimeError(f"driver health_check failed: {exc}") from exc
     if not healthy:
         raise RuntimeError("driver health_check failed")
     env_doc = driver.get_environment()
@@ -37,6 +40,13 @@ def poll_once(driver: BaseDriver, repo: WorkspaceRepository) -> dict[str, Any] |
     if validation.valid:
         try:
             result = driver.execute_action(action_type, parameters)
+        except DriverStateError as exc:
+            result = {
+                "success": False,
+                "code": "driver_not_ready",
+                "message": str(exc),
+                "action_type": action_type,
+            }
         except Exception as exc:
             result = {
                 "success": False,
@@ -92,7 +102,7 @@ def _finish_action(repo: WorkspaceRepository, action_id: str, result: dict[str, 
 
 
 def run_watchdog(
-    driver: BaseDriver,
+    driver: RuntimeDriver,
     *,
     workspace: str | Path = "workspace",
     poll_interval: float = 1.0,
@@ -104,12 +114,19 @@ def run_watchdog(
         repo.initialize()
     driver.load_environment(repo.get_environment())
 
-    with driver:
+    driver.connect()
+    try:
         env_doc = driver.get_environment()
         merge_runtime_state(env_doc, driver.get_runtime_state())
         repo.save_environment(env_doc)
-        while True:
-            poll_once(driver, repo)
-            if once:
-                return
-            time.sleep(poll_interval)
+        watcher = FileWatcher()
+        try:
+            while True:
+                poll_once(driver, repo)
+                if once:
+                    return
+                watcher.wait_for_change(repo.paths.action, timeout=poll_interval)
+        finally:
+            watcher.close()
+    finally:
+        driver.close()
