@@ -3,9 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from runtime.action_queue import empty_action_document, save_action_document
-from runtime.environment_io import default_environment_doc, save_environment_document
-
 
 DEFAULT_WORKSPACE = Path("workspace")
 
@@ -39,27 +36,11 @@ def workspace_paths(root: str | Path = DEFAULT_WORKSPACE) -> WorkspacePaths:
 
 
 def initialize_workspace(root: str | Path = DEFAULT_WORKSPACE, *, overwrite: bool = False) -> WorkspacePaths:
-    paths = workspace_paths(root)
-    paths.root.mkdir(parents=True, exist_ok=True)
+    from runtime.repository import WorkspaceRepository
 
-    if overwrite or not paths.action.exists():
-        save_action_document(paths.action, empty_action_document())
-    if overwrite or not paths.environment.exists():
-        save_environment_document(paths.environment, default_environment_doc())
-    if overwrite or not paths.embodied.exists():
-        paths.embodied.write_text(default_embodied_profile(), encoding="utf-8")
-    if overwrite or not paths.lessons.exists():
-        paths.lessons.write_text("# Lessons\n\nNo lessons recorded yet.\n", encoding="utf-8")
-    if overwrite or not paths.task.exists():
-        paths.task.write_text("# Task\n\n- status: idle\n- instruction: none\n", encoding="utf-8")
-    if overwrite or not paths.skill.exists():
-        paths.skill.write_text("# Skill\n\nNo reusable workflow recorded yet.\n", encoding="utf-8")
-    if overwrite or not paths.plan.exists():
-        paths.plan.write_text("# Task Plan\n\nNo plan generated yet.\n", encoding="utf-8")
-    if overwrite or not paths.report.exists():
-        paths.report.write_text("# Execution Report\n\nNo execution report generated yet.\n", encoding="utf-8")
-
-    return paths
+    repo = WorkspaceRepository(root)
+    repo.initialize(overwrite=overwrite)
+    return repo.paths
 
 
 def default_embodied_profile() -> str:

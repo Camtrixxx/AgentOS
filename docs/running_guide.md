@@ -79,10 +79,10 @@ python3 scripts/run_watchdog.py --once
 python3 scripts/run_watchdog.py --poll-interval 1.0
 ```
 
-运行最小工具 Agent。它会通过 `ToolRegistry` 调用 `reset_task`、`read_environment`、`step_env`、`render_fake_env`，并把工具调用写入 `outputs/traces/*.jsonl`：
+运行主 AgentOS 入口。它会通过 `ToolRegistry` 调用 plan step，把动作写入 `ACTION.md`，再由 watchdog + HAL driver 执行，并把工具调用写入 `outputs/traces/*.jsonl`：
 
 ```bash
-python3 scripts/run_tool_agent.py "pick up the red block and place it in the bowl"
+python3 scripts/run_agentos.py "pick up the red block and place it in the bowl"
 ```
 
 在 Docker 中运行：
@@ -90,7 +90,7 @@ python3 scripts/run_tool_agent.py "pick up the red block and place it in the bow
 ```bash
 docker exec heyuhang-dl bash -lc '
 cd /workspace/hyh/embodied-teleop-control-lab
-python scripts/run_tool_agent.py "pick up the red block and place it in the bowl" \
+python scripts/run_agentos.py "pick up the red block and place it in the bowl" \
   --workspace workspace/tool_agent_smoke \
   --render-output outputs/tool_agent_smoke.ppm
 '

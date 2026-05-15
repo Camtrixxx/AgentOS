@@ -22,15 +22,17 @@ synthetic hand keypoints
 -> fake robot backend
 ```
 
-第二条是具身 Agent 学习闭环：
+第二条是 file-backed 具身 AgentOS 闭环：
 
 ```text
 language instruction
--> RGB image + state observation
--> policy / VLA backend
--> action [dx, dy, gripper]
--> fake manipulation environment
--> evaluation report
+-> planner
+-> tool registry
+-> ACTION.md action queue
+-> watchdog + safety critic
+-> HAL driver
+-> ENVIRONMENT.md state
+-> REPORT.md / trace
 ```
 
 已经实现的能力：
@@ -46,6 +48,8 @@ language instruction
 - 随机化布局训练和评估
 - JSON / Markdown evaluation report
 - VLA-ready adapter 和 mock VLA backend
+- file-backed ACTION / ENVIRONMENT / PLAN / REPORT runtime
+- watchdog + HAL driver 安全执行链路
 
 ## Quick Start
 
@@ -85,7 +89,7 @@ python scripts/run_fake_pipeline.py
 运行具身 Agent：
 
 ```bash
-python scripts/run_agent.py
+python scripts/run_agentos.py
 ```
 
 导出 RGB 环境图：

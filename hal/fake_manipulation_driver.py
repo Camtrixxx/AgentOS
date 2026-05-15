@@ -20,6 +20,7 @@ class FakeManipulationDriver(BaseDriver):
         include_image: bool = False,
         randomize_layout: bool = False,
         max_steps: int = 80,
+        env: FakeManipulationEnv | None = None,
     ):
         self.config = FakeManipulationConfig(
             workspace_low=np.array([-1.0, -1.0], dtype=float),
@@ -28,7 +29,8 @@ class FakeManipulationDriver(BaseDriver):
             randomize_layout=randomize_layout,
             max_steps=max_steps,
         )
-        self.env = FakeManipulationEnv(config=self.config, seed=seed)
+        self.env = env or FakeManipulationEnv(config=self.config, seed=seed)
+        self.config = self.env.config
         self.last_observation = self.env.reset()
         self.last_reward = 0.0
         self.last_done = False
@@ -109,10 +111,21 @@ class FakeManipulationDriver(BaseDriver):
             info=self.last_info,
         )
 
+    def get_capabilities(self) -> dict[str, Any]:
+        return {
+            "supported_actions": ["reset", "env_step"],
+            "supported_colors": ["red", "blue", "green"],
+            "workspace_low": self.config.workspace_low.tolist(),
+            "workspace_high": self.config.workspace_high.tolist(),
+            "max_step_delta": float(self.config.step_size),
+            "receptacles": ["bowl"],
+        }
+
     def get_runtime_state(self) -> dict[str, Any]:
         return {
             "connected": True,
             "healthy": True,
+            "capabilities": self.get_capabilities(),
             "step_count": int(self.last_observation.get("step_count", 0)),
             "target_color": self.env.task.target_color,
             "last_reward": self.last_reward,

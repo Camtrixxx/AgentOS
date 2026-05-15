@@ -4,9 +4,11 @@ from pathlib import Path
 from typing import Any
 
 from envs.task_utils import parse_target_color
+from agent.scripted_policy import ScriptedPickPlacePolicy
 from hal.fake_manipulation_driver import FakeManipulationDriver
 from runtime.action_queue import append_action
 from runtime.action_validator import validate_action
+from runtime.environment_io import observation_from_environment_doc
 from runtime.repository import WorkspaceRepository, resolve_repo
 from runtime.watchdog import poll_once
 from tools.response import ToolResponse
@@ -54,10 +56,13 @@ class AppendActionTool:
                 validation.reason,
                 data={"action_type": action_type, "parameters": action_parameters},
             )
-        document = repo.get_actions()
-        updated = append_action(document, action_type=action_type, parameters=action_parameters)
-        repo.save_actions(updated)
-        action = updated["actions"][-1]
+        def append(document: dict[str, Any]) -> dict[str, Any]:
+            updated = append_action(document, action_type=action_type, parameters=action_parameters)
+            document.clear()
+            document.update(updated)
+            return updated["actions"][-1]
+
+        action = repo.update_actions(append)
         return ToolResponse.success(
             f"queued action {action['id']}",
             data={"action": action, "path": str(repo.paths.action)},
@@ -167,3 +172,73 @@ class StepEnvTool:
         if queued.error is not None:
             return queued
         return self.watchdog_tool.run({"workspace": repo.paths.root})
+
+
+class ScriptedPickPlaceLoopTool:
+    name = "scripted_pick_place_loop"
+    description = "Run a scripted pick-place policy through ACTION.md and the watchdog until success or timeout."
+
+    def __init__(
+        self,
+        workspace: str | Path | WorkspaceRepository = "workspace",
+        driver: FakeManipulationDriver | None = None,
+        policy: Any | None = None,
+    ):
+        self._repo_params: str | Path | WorkspaceRepository = workspace
+        self.step_tool = StepEnvTool(workspace, driver=driver)
+        self.policy = policy or ScriptedPickPlacePolicy()
+
+    def run(self, parameters: dict[str, Any]) -> ToolResponse:
+        repo = resolve_repo(self._repo_params, parameters)
+        repo.initialize()
+        max_steps = int(parameters.get("max_steps", 80))
+        records: list[dict[str, Any]] = []
+
+        for _ in range(max_steps):
+            environment = repo.get_environment()
+            episode = environment.get("episode", {}) if isinstance(environment, dict) else {}
+            if bool(episode.get("success", False)) or bool(episode.get("done", False)):
+                return ToolResponse.success(
+                    "scripted loop already complete",
+                    data={"success": bool(episode.get("success", False)), "step_records": records},
+                )
+
+            observation = observation_from_environment_doc(environment)
+            action = self.policy.act(observation).tolist()
+            response = self.step_tool.run({"workspace": repo.paths.root, "action": action})
+            updated_environment = repo.get_environment()
+            updated_episode = updated_environment.get("episode", {}) if isinstance(updated_environment, dict) else {}
+            record = {
+                "action": action,
+                "tool_status": response.status.value,
+                "tool_text": response.text,
+                "step_count": updated_episode.get("step_count"),
+                "reward": updated_episode.get("last_reward"),
+                "success": bool(updated_episode.get("success", False)),
+                "done": bool(updated_episode.get("done", False)),
+            }
+            if response.error is not None:
+                record["error"] = response.error
+            records.append(record)
+            if response.error is not None:
+                return ToolResponse.failure(
+                    response.error.get("code", "scripted_loop_failed"),
+                    response.error.get("message", response.text),
+                    data={"success": False, "step_records": records, "environment": updated_environment},
+                )
+            if bool(updated_episode.get("success", False)) or bool(updated_episode.get("done", False)):
+                return ToolResponse.success(
+                    "scripted loop completed",
+                    data={
+                        "success": bool(updated_episode.get("success", False)),
+                        "step_records": records,
+                        "environment": updated_environment,
+                    },
+                )
+
+        environment = repo.get_environment()
+        return ToolResponse.failure(
+            "scripted_loop_timeout",
+            f"scripted loop reached max_steps={max_steps}",
+            data={"success": False, "step_records": records, "environment": environment},
+        )

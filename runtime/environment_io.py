@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from envs.task_utils import parse_target_color
+from runtime.file_io import atomic_write_text
 
 
 ENVIRONMENT_SCHEMA_VERSION = "embodied_lab.environment.v1"
@@ -106,6 +107,23 @@ def environment_doc_from_observation(
     }
 
 
+def observation_from_environment_doc(environment: dict[str, Any]) -> dict[str, Any]:
+    """Rebuild the policy-facing observation shape from an environment document."""
+
+    task = environment.get("task", {}) if isinstance(environment.get("task"), dict) else {}
+    robot = environment.get("robot", {}) if isinstance(environment.get("robot"), dict) else {}
+    episode = environment.get("episode", {}) if isinstance(environment.get("episode"), dict) else {}
+    return {
+        "instruction": str(task.get("instruction") or ""),
+        "ee_position": robot.get("ee_position", [0.0, -0.75]),
+        "gripper_closed": bool(robot.get("gripper_closed", False)),
+        "held_object": robot.get("held_object"),
+        "objects": environment.get("objects", {}),
+        "receptacles": environment.get("receptacles", {}),
+        "step_count": episode.get("step_count", 0),
+    }
+
+
 def infer_target_color(observation: dict[str, Any]) -> str:
     return parse_target_color(str(observation.get("instruction", "")))
 
@@ -148,8 +166,7 @@ def load_environment_document(path: Path) -> dict[str, Any]:
 
 
 def save_environment_document(path: Path, document: dict[str, Any] | None) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(dump_environment_document(document), encoding="utf-8")
+    atomic_write_text(path, dump_environment_document(document), encoding="utf-8")
 
 
 def merge_runtime_state(document: dict[str, Any], runtime_state: dict[str, Any]) -> None:
@@ -159,4 +176,3 @@ def merge_runtime_state(document: dict[str, Any], runtime_state: dict[str, Any])
     document.setdefault("runtime", {})
     document["runtime"].update(to_jsonable(runtime_state))
     document["updated_at"] = utc_now_iso()
-

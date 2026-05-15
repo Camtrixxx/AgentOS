@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from runtime.environment_io import to_jsonable, utc_now_iso
+from runtime.file_io import atomic_write_text
 from runtime.planner import PlannedStep, TaskPlan
 
 
@@ -48,8 +49,7 @@ def dump_plan_document(plan: TaskPlan) -> str:
 
 
 def save_plan_document(path: Path, plan: TaskPlan) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(dump_plan_document(plan), encoding="utf-8")
+    atomic_write_text(path, dump_plan_document(plan), encoding="utf-8")
 
 
 def dump_execution_report(report: dict[str, Any]) -> str:
@@ -61,6 +61,4 @@ def dump_execution_report(report: dict[str, Any]) -> str:
 
 
 def save_execution_report(path: Path, report: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(dump_execution_report(report), encoding="utf-8")
-
+    atomic_write_text(path, dump_execution_report(report), encoding="utf-8")

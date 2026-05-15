@@ -5,7 +5,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from tools.embodied_tools import AppendActionTool, ReadEnvironmentTool
+from hal.fake_manipulation_driver import FakeManipulationDriver
+from tools.embodied_tools import AppendActionTool, ReadEnvironmentTool, ResetTaskTool, ScriptedPickPlaceLoopTool
 from tools.planner_tools import CreatePlanTool
 from tools.registry import ToolRegistry
 
@@ -42,3 +43,25 @@ def test_create_plan_tool_writes_plan(tmp_path):
     assert response.status.value == "success"
     assert response.data["plan"]["target_color"] == "green"
     assert (tmp_path / "PLAN.md").exists()
+
+
+def test_scripted_pick_place_loop_runs_through_watchdog(tmp_path):
+    driver = FakeManipulationDriver(seed=0)
+    registry = ToolRegistry()
+    registry.register(ResetTaskTool(tmp_path, driver=driver))
+    registry.register(ScriptedPickPlaceLoopTool(tmp_path, driver=driver))
+
+    reset = registry.run(
+        "reset_task",
+        {
+            "instruction": "pick up the red block and place it in the bowl",
+            "target_color": "red",
+            "receptacle_name": "bowl",
+        },
+    )
+    response = registry.run("scripted_pick_place_loop", {"max_steps": 80})
+
+    assert reset.status.value == "success"
+    assert response.status.value == "success"
+    assert response.data["success"]
+    assert response.data["step_records"]

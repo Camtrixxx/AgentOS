@@ -34,6 +34,13 @@ def test_execute_task_plan_writes_plan_and_report(tmp_path):
 
     assert result.success
     assert result.steps < 80
+    assert result.step_records
+    assert [record["tool"] for record in result.step_records] == [
+        "reset_task",
+        "scripted_pick_place_loop",
+        "render_fake_env",
+    ]
     assert (workspace / "PLAN.md").exists()
     assert (workspace / "REPORT.md").exists()
+    assert "scripted_pick_place_loop" in (workspace / "REPORT.md").read_text(encoding="utf-8")
     assert (tmp_path / "render.ppm").exists()

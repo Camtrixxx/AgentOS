@@ -6,11 +6,14 @@ from pathlib import Path
 from typing import Any
 
 from runtime.environment_io import to_jsonable
+from runtime.file_io import atomic_write_text
 
 
 ACTION_QUEUE_SCHEMA_VERSION = "embodied_lab.action_queue.v1"
 FENCE_OPEN = "```json"
 FENCE_CLOSE = "```"
+TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
+KNOWN_STATUSES = {"pending", "running", *TERMINAL_STATUSES}
 
 
 def parse_action_markdown(content: str) -> dict[str, Any] | None:
@@ -41,14 +44,22 @@ def normalize_action_item(payload: Any) -> dict[str, Any] | None:
         return None
 
     status = str(payload.get("status") or "pending").strip().lower() or "pending"
+    if status not in KNOWN_STATUSES:
+        return None
     item: dict[str, Any] = {
         "id": str(payload.get("id") or uuid.uuid4().hex[:12]),
         "action_type": action_type,
         "parameters": parameters,
         "status": status,
+        "created_at": str(payload.get("created_at") or ""),
+        "started_at": payload.get("started_at"),
+        "finished_at": payload.get("finished_at"),
+        "attempt_count": _safe_int(payload.get("attempt_count"), default=0),
     }
     if "result" in payload:
         item["result"] = payload["result"]
+    if "error" in payload:
+        item["error"] = payload["error"]
     return item
 
 
@@ -94,15 +105,47 @@ def append_action(
     action_id: str | None = None,
 ) -> dict[str, Any]:
     normalized = normalize_action_document(document)
+    from runtime.environment_io import utc_now_iso
+
     normalized["actions"].append(
         {
             "id": action_id or uuid.uuid4().hex[:12],
             "action_type": action_type,
             "parameters": parameters or {},
             "status": "pending",
+            "created_at": utc_now_iso(),
+            "started_at": None,
+            "finished_at": None,
+            "attempt_count": 0,
+            "result": None,
+            "error": None,
         }
     )
     return normalized
+
+
+def mark_action_running(document: dict[str, Any], action_index: int) -> dict[str, Any]:
+    from runtime.environment_io import utc_now_iso
+
+    action = document["actions"][action_index]
+    action["status"] = "running"
+    action["started_at"] = utc_now_iso()
+    action["finished_at"] = None
+    action["attempt_count"] = _safe_int(action.get("attempt_count"), default=0) + 1
+    action["error"] = None
+    return document
+
+
+def mark_action_finished(document: dict[str, Any], action_index: int, result: Any) -> dict[str, Any]:
+    from runtime.environment_io import utc_now_iso
+
+    status = infer_terminal_status(result)
+    action = document["actions"][action_index]
+    action["status"] = status
+    action["finished_at"] = utc_now_iso()
+    action["result"] = result
+    action["error"] = _result_error(result) if status == "failed" else None
+    return document
 
 
 def dump_action_document(document: dict[str, Any] | None) -> str:
@@ -122,8 +165,7 @@ def load_action_document(path: Path) -> dict[str, Any]:
 
 
 def save_action_document(path: Path, document: dict[str, Any] | None) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(dump_action_document(document), encoding="utf-8")
+    atomic_write_text(path, dump_action_document(document), encoding="utf-8")
 
 
 def infer_terminal_status(result: Any) -> str:
@@ -140,3 +182,19 @@ def infer_terminal_status(result: Any) -> str:
     if "cancelled" in lowered or "canceled" in lowered:
         return "cancelled"
     return "completed"
+
+
+def _result_error(result: Any) -> dict[str, Any] | None:
+    if isinstance(result, dict):
+        return {
+            "code": str(result.get("code") or result.get("error") or "action_failed"),
+            "message": str(result.get("message") or result.get("error") or "action failed"),
+        }
+    return {"code": "action_failed", "message": str(result)}
+
+
+def _safe_int(value: Any, *, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default

@@ -49,13 +49,21 @@ class BaseDriver(ABC):
         """Run a lightweight connection health check."""
         return self.is_connected()
 
+    def get_capabilities(self) -> dict[str, Any]:
+        """Return supported actions and safety limits for validators/agents."""
+        return {}
+
     def get_runtime_state(self) -> dict[str, Any]:
         """Return optional runtime state such as nav or connection status.
 
         Merged into ENVIRONMENT.md after each poll cycle so downstream
         consumers (Planner, tools) can inspect live state.
         """
-        return {"connected": self.is_connected(), "healthy": self.health_check()}
+        return {
+            "connected": self.is_connected(),
+            "healthy": self.health_check(),
+            "capabilities": self.get_capabilities(),
+        }
 
     def close(self) -> None:
         """Release hardware resources. Override if needed."""

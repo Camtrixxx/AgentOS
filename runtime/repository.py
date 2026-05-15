@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import fcntl
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Iterator, TypeVar
 
 from runtime.action_queue import (
     empty_action_document,
@@ -21,6 +23,8 @@ from runtime.workspace import (
     default_embodied_profile,
     workspace_paths,
 )
+
+T = TypeVar("T")
 
 
 def resolve_repo(
@@ -96,6 +100,26 @@ class WorkspaceRepository:
 
     def save_actions(self, document: dict[str, Any]) -> None:
         save_action_document(self._paths.action, document)
+
+    def update_actions(self, mutator: Callable[[dict[str, Any]], T]) -> T:
+        """Run a locked read-modify-write transaction on ACTION.md."""
+
+        with self._action_lock():
+            document = self.get_actions()
+            result = mutator(document)
+            self.save_actions(document)
+            return result
+
+    @contextmanager
+    def _action_lock(self) -> Iterator[None]:
+        self._paths.root.mkdir(parents=True, exist_ok=True)
+        lock_path = self._paths.root / ".ACTION.md.lock"
+        with lock_path.open("a+", encoding="utf-8") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
     # -- plan / report --
 
