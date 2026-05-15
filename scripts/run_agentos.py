@@ -13,7 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from envs.fake_manipulation_env import FakeManipulationConfig, FakeManipulationEnv
 from hal.fake_manipulation_driver import FakeManipulationDriver
 from runtime.executor import AgentOSExecutor
-from runtime.planner import RuleBasedPlanner
+from runtime.planner import Planner, RuleBasedPlanner
 from runtime.trace import TraceLogger
 
 
@@ -26,6 +26,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--randomize-layout", action="store_true")
     parser.add_argument("--render-output", default="outputs/agentos_env.ppm")
+    parser.add_argument(
+        "--planner",
+        choices=["rule", "deepseek"],
+        default="rule",
+        help="Planner backend. Defaults to deterministic rule planner.",
+    )
     return parser.parse_args()
 
 
@@ -41,7 +47,14 @@ def main() -> None:
     env = FakeManipulationEnv(config=config, seed=args.seed)
     driver = FakeManipulationDriver(env=env)
     trace = TraceLogger(PROJECT_ROOT / "outputs" / "traces")
-    plan = RuleBasedPlanner().plan(args.instruction, target_color=args.target_color)
+    planner: Planner
+    if args.planner == "deepseek":
+        from runtime.llm_planner import DeepSeekPlanner
+
+        planner = DeepSeekPlanner()
+    else:
+        planner = RuleBasedPlanner()
+    plan = planner.plan(args.instruction, target_color=args.target_color)
 
     result = AgentOSExecutor(workspace=workspace, driver=driver, trace=trace).execute(
         plan,

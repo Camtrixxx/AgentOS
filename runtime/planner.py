@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Protocol
 
 from envs.task_utils import parse_target_color
 
@@ -17,6 +18,11 @@ class TaskPlan:
     instruction: str
     target_color: str
     steps: list[PlannedStep]
+
+
+class Planner(Protocol):
+    def plan(self, instruction: str, *, target_color: str | None = None) -> TaskPlan:
+        ...
 
 
 class RuleBasedPlanner:
@@ -50,6 +56,5 @@ class RuleBasedPlanner:
                 ),
             ],
         )
-
 
 

@@ -104,6 +104,26 @@ python3 scripts/run_agentos.py "pick up the blue block and place it in the bowl"
   --render-output outputs/agentos_blue.ppm
 ```
 
+### 1.2 DeepSeek LLM Planner
+
+`run_agentos.py` 默认使用 deterministic `RuleBasedPlanner`。如果配置了 DeepSeek API key，可以让 LLM 生成 workflow-level `TaskPlan`：
+
+```bash
+export DEEPSEEK_API_KEY="sk-..."
+python3 scripts/run_agentos.py \
+  "pick up the blue block and place it in the bowl" \
+  --planner deepseek
+```
+
+可选环境变量：
+
+```text
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-v4-pro
+```
+
+没有 API key、API 调用失败或 LLM 输出未通过本地校验时，会自动 fallback 到 `RuleBasedPlanner`。LLM planner 只允许输出 `reset_task`、`scripted_pick_place_loop`、`render_fake_env` 这类 workflow step，不允许输出 `[dx, dy, gripper]` 等低层动作。
+
 运行后重点查看：
 
 ```text

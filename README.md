@@ -63,6 +63,17 @@ python scripts/run_agentos.py \
   --render-output outputs/agentos_demo.ppm
 ```
 
+使用 DeepSeek 作为可选 LLM Planner：
+
+```bash
+export DEEPSEEK_API_KEY="sk-..."
+python scripts/run_agentos.py \
+  "pick up the blue block and place it in the bowl" \
+  --planner deepseek
+```
+
+没有 `DEEPSEEK_API_KEY` 时，DeepSeek planner 会自动 fallback 到 deterministic `RuleBasedPlanner`。LLM 只生成 workflow-level `TaskPlan`，不会直接输出低层动作。
+
 运行 direct policy debug 路径：
 
 ```bash
