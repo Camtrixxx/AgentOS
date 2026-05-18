@@ -1,232 +1,327 @@
-# Embodied AgentOS Lab
+# AgentOS — 仿真优先的具身 Agent 运行框架
 
-一个 simulation-first 的具身 AgentOS 项目，用来验证：
+AgentOS 是一个 simulation-first 的具身 Agent 执行框架。它把"Agent 决策 → 环境执行"这条链路做成了一套**可审计、可恢复、可测试、可替换**的文件协议系统。
+
+核心命题：**AI Agent 产出的动作，在被物理执行之前，应该经过什么样的安全边界？**
+
+答案：一个多层的文件驱动协议——Planner → Tool → ACTION.md → Watchdog → Driver State Machine → ENVIRONMENT.md。
+
+---
+
+## 一句话理解
 
 ```text
-language task
--> planner
--> tools
--> ACTION.md
--> watchdog + safety validator
--> HAL driver
--> ENVIRONMENT.md
--> report / trace / lessons
+你说 "lift the cube"
+
+→ SkillLibraryPlanner 匹配 robosuite_skill.md 里的 "robosuite_lift" 模板
+→ AgentOSExecutor 执行 3 个 step（reset / lift_loop / render）
+→ RobosuiteLiftLoopTool 每步调用 5 阶段 FSM 策略
+→ 策略产出的 [dx, dy, dz, gripper] 写入 ACTION.md
+→ Watchdog fcntl 锁住 ACTION.md，校验，通过 RobosuiteDriver 执行
+→ MuJoCo 物理引擎里 Panda 机械臂移动到方块上方 → 下降 → 闭合夹爪 → 上抬
+→ 每 N 步渲染一帧，最终生成 GIF + trace.jsonl
+→ 浏览器打开 viewer.html 看完整回放
 ```
 
-项目最初来自 teleop-control lab 原型，现在已经收敛为 file-backed embodied AgentOS runtime。早期 synthetic teleop demo 已从主线移除，相关原始资料保留在 `docs/reference/`，作为未来 human-input provider 的参考。
+---
 
-## What It Does
+## 项目架构
 
-当前主线是一个可审计、可恢复、模型与执行层解耦的具身运行时：
+```text
+scripts/                ← CLI 入口
+  run_agentos.py        主执行入口
+  benchmark_agentos.py  多回合系统评估
+  run_agent.py          直接策略调试
+  run_watchdog.py       独立 watchdog
+  render_stable_lift_viz.py  独立可视化
 
-- file-backed workspace protocol: `ACTION.md`、`ENVIRONMENT.md`、`PLAN.md`、`REPORT.md`
-- `AgentOSExecutor` 通过 `ToolRegistry` 执行计划步骤
-- `AppendActionTool` 把动作写入 `ACTION.md`
-- `watchdog` 监听 action queue，校验后通过 HAL driver 执行
-- `BaseDriver` 提供状态机、capabilities、runtime state 和 CQRS 协议边界
-- `FakeManipulationDriver` 用 fake pick-and-place 环境验证完整闭环
-- BC / VisionBC / RL / VLA policy 作为可插拔能力和离线学习路径
+runtime/                ← 协议核心
+  planner.py            Planner Protocol + RuleBasedPlanner
+  skill_planner.py      SkillLibraryPlanner（模板匹配）
+  llm_planner.py        DeepSeekPlanner（LLM + 9 点校验 + fallback）
+  plan_utils.py         共享工具（force_target_color）
+  skill_recorder.py     成功 → 录制 skill → 去重 → 写回 SKILL.md
+  executor.py           AgentOSExecutor
+  watchdog.py           消费 ACTION.md，校验并执行
+  action_queue.py       ACTION.md 读写 + 生命周期
+  action_validator.py   动态 capabilities 校验
+  repository.py         WorkspaceRepository + fcntl 锁
+  environment_io.py     ENVIRONMENT.md 编解码
+  file_io.py            原子写入
+  file_watcher.py       inotify + mtime 文件监听
+  trace.py              JSONL 审计日志
 
-默认环境不依赖真实机器人即可运行。
+tools/                  ← 工具层
+  embodied_tools.py     AppendAction, StepEnv, ResetTask, ScriptedPickPlaceLoop
+  robosuite_tools.py    RobosuiteLiftLoopTool + 可视化管线（帧序列/GIF/WebP/HTML）
+  evaluation_tools.py   EvaluateScriptedPolicy
+  render_tools.py       RenderFakeEnv（兼容 fake 和 robosuite）
+  planner_tools.py      CreatePlan
 
-## Quick Start
+hal/                    ← 驱动层
+  base_driver.py        BaseDriver + DriverState + CQRS 协议
+  fake_manipulation_driver.py  2D pick-and-place
+  robosuite_driver.py   3D MuJoCo/Panda
+  drivers.py            DriverRegistry（动态发现）
 
-```bash
-cd /workspace/hyh/embodied-teleop-control-lab
-bash scripts/sh/00_smoke_test.sh
+envs/                   ← 环境适配层
+  fake_manipulation_env.py   2D 语言条件 pick-and-place
+  robosuite_env.py           robosuite → AgentOS 观测适配
+  fake_manipulation_render.py  RGB 渲染
+  ppm_writer.py         PPM 图片输出
+
+agent/                  ← 策略层
+  scripted_policy.py    2D 启发式 pick-place
+  robosuite_scripted_policy.py  5 阶段 FSM Lift 策略
+  bc_policy.py          BC
+  vision_bc_policy.py   VisionBC
+  vla_policy.py         VLA
+  rl_policy.py          RL
+
+learning/               ← 离线训练 + 评估
+  train_bc.py           训练 BC
+  train_vision_bc.py    训练 VisionBC
+  evaluate_policy.py    策略评估
+  evaluation_report.py  评估报告生成
+  agentos_benchmark_report.py  Benchmark 报告
+
+recorders/              ← 数据录制 + 导出
+  episode_recorder.py   回合录制
+  lerobot_exporter.py   LeRobot 格式导出
+  inspector.py          数据集检查
 ```
 
-主 AgentOS 入口：
+---
+
+## 快速开始
+
+### 环境要求
+
+- Python 3.11+
+- numpy
+- Pillow
+
+可选依赖（按需安装）：
+- `mujoco` + `robosuite` — 3D 物理仿真
+- `openai` — DeepSeek LLM Planner
+- `torch` + `torchvision` — BC/VisionBC 策略
+- `torch_npu` — 华为 Ascend NPU 推理
+
+### 运行 2D 环境
 
 ```bash
+# 默认 fake 环境，三色方块 pick-and-place
 python scripts/run_agentos.py "pick up the red block and place it in the bowl"
-```
 
-运行后重点查看：
-
-```text
-workspace/.../ACTION.md       action queue and results
-workspace/.../ENVIRONMENT.md  latest runtime state
-workspace/.../PLAN.md         planner output
-workspace/.../REPORT.md       execution summary
-outputs/traces/*.jsonl        tool/runtime trace
-```
-
-## Common Commands
-
-运行 AgentOS 闭环：
-
-```bash
+# 指定 workspace 和渲染输出
 python scripts/run_agentos.py \
   "pick up the green block and place it in the bowl" \
   --workspace workspace/agentos_demo \
   --render-output outputs/agentos_demo.ppm
 ```
 
-使用 DeepSeek 作为可选 LLM Planner：
+### 运行 3D robosuite 环境
 
 ```bash
-export DEEPSEEK_API_KEY="sk-..."
-python scripts/run_agentos.py \
-  "pick up the blue block and place it in the bowl" \
-  --planner deepseek
-```
-
-没有 `DEEPSEEK_API_KEY` 时，DeepSeek planner 会自动 fallback 到 deterministic `RuleBasedPlanner`。LLM 只生成 workflow-level `TaskPlan`，不会直接输出低层动作。
-
-使用可复用 skill library 作为 Planner：
-
-```bash
-python scripts/run_agentos.py \
-  "pick up the blue block and place it in the bowl" \
-  --planner skill
-```
-
-默认 skill 定义在 `runtime/skills/default_skill.md`。如需试验自定义 workflow，可传入 `--skill-path path/to/SKILL.md`。
-
-把成功执行的 plan 录制到当前 workspace 的 `SKILL.md`：
-
-```bash
-python scripts/run_agentos.py \
-  "pick up the blue block and place it in the bowl" \
-  --planner skill \
-  --record-skill
-```
-
-运行完整 AgentOS 多回合 benchmark：
-
-```bash
-python scripts/benchmark_agentos.py \
-  --planner skill \
-  --num-episodes 9 \
-  --randomize-layout
-```
-
-可选 3D 仿真后端验证：
-
-```bash
+# 验证 robosuite 安装
 python scripts/test_robosuite_env.py --task Lift --robot Panda
-```
 
-`robosuite` / `mujoco` 是可选依赖。当前华为 NPU 环境推荐用 MuJoCo CPU 做物理仿真，把 NPU 留给 VisionBC / VLA 推理；后续迁移 A100 后再接 Isaac Lab 做大规模并行仿真。
-
-运行 robosuite Lift 的 AgentOS 闭环：
-
-```bash
+# AgentOS 闭环跑 Lift 任务
 python scripts/run_agentos.py \
   "lift the cube" \
   --driver robosuite \
-  --sim-task Lift \
-  --robot Panda \
+  --sim-task Lift --robot Panda \
   --planner skill \
   --skill-path runtime/skills/robosuite_skill.md
 ```
 
-运行 direct policy debug 路径：
+执行后会生成可视化产物（skill 已配置 `render_every: 4`）：
 
-```bash
-python scripts/run_agent.py
+```text
+outputs/robosuite_lift_viz/
+├── frame_0000.png        各阶段帧
+├── frame_0004.png
+├── ...
+├── trace.jsonl           每步 stage/action/reward/ee/cube
+├── lift.gif              完整动画
+├── lift.webp             高压缩版
+├── contact_sheet.png     10 帧时间线摘要
+└── viewer.html           交互式播放器（暂停/播放/逐帧）
 ```
 
-导出 RGB 环境图：
+### 生成独立可视化（不走 AgentOS 全栈）
 
 ```bash
-python scripts/render_fake_env.py --output outputs/fake_env.ppm
+python scripts/render_stable_lift_viz.py
+# 输出: outputs/robosuite_lift_viz/lift.gif + viewer.html
 ```
 
-采集随机化视觉 demonstrations：
+---
+
+## 三个 Planner
+
+```text
+SkillLibraryPlanner   模板匹配，可审计可版本化     ← 首选
+DeepSeekPlanner       LLM + 9 点校验 + fallback   ← 未来组合能力
+RuleBasedPlanner      硬编码 3-step               ← 最后防线
+
+Fallback 链:  skill → deepseek → rule
+```
+
+### SkillLibraryPlanner（推荐）
 
 ```bash
-bash scripts/sh/03_collect_vision_demos_random.sh
+# 2D pick-place skill
+python scripts/run_agentos.py \
+  "pick up the blue block and place it in the bowl" \
+  --planner skill
+
+# 3D robosuite Lift skill
+python scripts/run_agentos.py \
+  "lift the cube" \
+  --driver robosuite --planner skill \
+  --skill-path runtime/skills/robosuite_skill.md
+
+# 执行成功后自动录制 plan 为 skill
+python scripts/run_agentos.py \
+  "pick up the green block and place it in the bowl" \
+  --planner skill --record-skill
 ```
 
-训练随机化 VisionBC：
+### DeepSeekPlanner（LLM）
 
 ```bash
-bash scripts/sh/04_train_vision_bc_random.sh
+export DEEPSEEK_API_KEY="sk-..."
+python scripts/run_agentos.py \
+  "pick up the red block and place it in the bowl" \
+  --planner deepseek
 ```
 
-评估随机化 VisionBC 并生成报告：
+没有 API key 时自动 fallback 到 RuleBasedPlanner。LLM 只能输出 workflow-level TaskPlan JSON——如果模型尝试输出 `[dx, dy, gripper]` 低层动作，第 5 点校验直接拒绝。
+
+### RuleBasedPlanner（默认）
+
+永远可用，零依赖。
+
+---
+
+## 多回合 Benchmark
 
 ```bash
-bash scripts/sh/05_eval_vision_bc_random.sh
+# 9 回合，随机化布局
+python scripts/benchmark_agentos.py \
+  --planner skill \
+  --num-episodes 9 \
+  --randomize-layout
+
+# 对比 rule 和 deepseek planner
+python scripts/benchmark_agentos.py --planner rule --num-episodes 9
+python scripts/benchmark_agentos.py --planner deepseek --num-episodes 9
+
+# 3D robosuite benchmark
+python scripts/benchmark_agentos.py \
+  --driver robosuite --planner skill --num-episodes 3
 ```
 
-运行 VLA-ready mock backend：
+---
+
+## Workspace 文件协议
+
+```text
+workspace/
+├── ACTION.md        命令队列，fcntl 锁保护 (pending→running→completed)
+├── ENVIRONMENT.md   运行时状态 (robot/objects/episode/runtime)
+├── EMBODIED.md      驱动 profile 和能力声明
+├── LESSONS.md       失败经验积累
+├── TASK.md          当前任务摘要
+├── SKILL.md         可复用 workflow 模板
+├── PLAN.md          Planner 输出
+└── REPORT.md        执行报告
+```
+
+---
+
+## 安全链路
+
+```text
+LLM 输出 JSON
+  → _parse_json() + plan_from_dict()
+  → 9 点校验 (tool name / color / params / steps / max_steps / ...)
+  → ToolRegistry.run()
+  → AppendActionTool → ActionValidator (capabilities 驱动)
+  → ACTION.md (fcntl 锁)
+  → Watchdog.poll_once()
+  → Driver.execute_action() (状态机 guard: IDLE→EXECUTING→IDLE)
+  → _execute_action() (物理执行)
+  → ENVIRONMENT.md 回写
+```
+
+---
+
+## 执行路径
+
+**在线 AgentOS 路径**（审计、可恢复）：
+```
+run_agentos.py → Planner → ToolRegistry → ACTION.md → Watchdog → Driver → ENVIRONMENT.md
+```
+
+**离线直接路径**（高速、批量训练）：
+```
+evaluate_policy.py / train_bc.py → env.reset() → policy.act() → env.step()
+```
+
+---
+
+## 策略
+
+| 策略 | 文件 | 说明 |
+|------|------|------|
+| ScriptedPickPlace | `agent/scripted_policy.py` | 2D 启发式 |
+| RobosuiteLift | `agent/robosuite_scripted_policy.py` | 5 阶段 FSM（对齐→下探→闭合→上抬→保持） |
+| BC | `agent/bc_policy.py` | 行为克隆 |
+| VisionBC | `agent/vision_bc_policy.py` | 视觉 BC |
+| VLA | `agent/vla_policy.py` | mock/smolvla backend |
+| RL | `agent/rl_policy.py` | 强化学习 |
+
+---
+
+## 测试
 
 ```bash
-bash scripts/sh/06_eval_mock_vla.sh
+# 全部测试（含 robosuite import guard）
+python -m pytest tests/ -v   # 79 passed
+
+# 仅单元测试（不依赖 mujoco/robosuite）
+python -m pytest tests/ -v --ignore=tests/test_robosuite_optional.py
 ```
 
-清理本地生成物：
+---
+
+## 文档
+
+- `docs/architecture_diagram.md` — 12 张架构图
+- `docs/project_overview.md` — 项目定位
+- `docs/running_guide.md` — 运行指南
+- `docs/reference/` — 历史遥操管线参考资料
+
+---
+
+## 清理生成物
 
 ```bash
 bash scripts/sh/99_clean_generated.sh
 ```
 
-## Project Layout
+---
+
+## 演进路线
 
 ```text
-agent/        policy wrappers and VLA backends
-recorders/    episode recorders and dataset schema
-docs/         architecture, running guide, and reference notes
-envs/         fake manipulation environment and renderer
-hal/          AgentOS driver contracts, driver registry, fake/robosuite drivers, VLA adapter
-learning/     BC / VisionBC / RL models, datasets, training, evaluation reports
-runtime/      workspace protocol, executor, watchdog, action queue, planner, trace
-scripts/      Python entrypoints and shell shortcuts
-tests/        regression tests
-tools/        plug-in tools for the AgentOS runtime
+当前: robosuite Lift 单任务 + Layer 1/2 可视化
+  ↓
+短期: robosuite PickPlace / Stack 策略 + 对应 skill 模板
+  ↓
+中期: VisionBC / VLA on 3D 视觉输入
+  ↓
+长期: A100 → Isaac Lab 并行仿真 + 大规模 benchmark
 ```
-
-## VLA-Ready Design
-
-VLA models plug in behind the same policy boundary:
-
-```text
-FakeManipulationEnv observation
--> FakeEnvVLAAdapter
--> VLAObservation(image, instruction, state)
--> VLABackend.predict(...)
--> VLAAction(ee_delta, gripper)
--> env action [dx, dy, gripper]
-```
-
-当前 mock backend 可以这样运行：
-
-```bash
-python learning/evaluate_policy.py \
-  --policy vla \
-  --vla-backend mock \
-  --randomize-layout \
-  --max-steps 100 \
-  --write-report
-```
-
-以后接 OpenVLA、LeRobot、SmolVLA、Pi0 或远程模型服务时，主要新增一个 backend，实现：
-
-```python
-predict(observation: VLAObservation) -> VLAAction
-```
-
-## Generated Artifacts
-
-以下目录是运行后生成的，不进入 Git：
-
-```text
-data/
-outputs/
-checkpoints/
-workspace/
-```
-
-## Documentation
-
-- [docs/running_guide.md](docs/running_guide.md): 怎么运行主要模块
-- [docs/project_overview.md](docs/project_overview.md): 项目定位和架构说明
-- [docs/architecture_diagram.md](docs/architecture_diagram.md): AgentOS runtime 数据流
-- [recorders/schema.md](recorders/schema.md): demonstration 数据格式
-
-## Resume Angle
-
-> Built a simulation-first embodied AgentOS runtime with file-backed action/state protocols, a watchdog-driven HAL execution loop, driver state management, policy/VLA boundaries, offline imitation learning pipelines, and auditable reports/traces.
