@@ -23,6 +23,8 @@ class RobosuiteDriver(BaseDriver):
         seed: int = 0,
         has_offscreen_renderer: bool = False,
         use_camera_obs: bool = False,
+        camera_name: str = "frontview",
+        image_size: int = 256,
         horizon: int = 200,
     ):
         super().__init__()
@@ -32,6 +34,8 @@ class RobosuiteDriver(BaseDriver):
             horizon=horizon,
             has_offscreen_renderer=has_offscreen_renderer,
             use_camera_obs=use_camera_obs,
+            camera_name=camera_name,
+            image_size=image_size,
         )
         self.env = RobosuiteEnvAdapter(self.config, seed=seed)
         self.instruction = "lift the cube"

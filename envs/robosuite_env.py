@@ -16,7 +16,7 @@ class RobosuiteEnvConfig:
     has_offscreen_renderer: bool = False
     use_camera_obs: bool = False
     camera_name: str = "frontview"
-    image_size: int = 128
+    image_size: int = 256
 
 
 class RobosuiteEnvAdapter:
@@ -73,6 +73,26 @@ class RobosuiteEnvAdapter:
         raise ValueError(f"expected action shape (3,), (4,), or ({native_dim},), got {tuple(raw.shape)}")
 
     def render_rgb(self) -> np.ndarray:
+        if self.config.has_offscreen_renderer and hasattr(self.env, "sim"):
+            try:
+                image = self.env.sim.render(
+                    camera_name=self.config.camera_name,
+                    width=self.config.image_size,
+                    height=self.config.image_size,
+                    depth=False,
+                )
+                return np.asarray(image, dtype=np.uint8)[::-1]
+            except Exception:
+                pass
+        image_key = f"{self.config.camera_name}_image"
+        image = self.last_raw_observation.get(image_key)
+        if image is None:
+            for key, value in self.last_raw_observation.items():
+                if key.endswith("_image"):
+                    image = value
+                    break
+        if image is not None:
+            return np.asarray(image, dtype=np.uint8)
         if hasattr(self.env, "sim"):
             image = self.env.sim.render(
                 camera_name=self.config.camera_name,
@@ -96,6 +116,9 @@ class RobosuiteEnvAdapter:
             has_renderer=self.config.has_renderer,
             has_offscreen_renderer=self.config.has_offscreen_renderer,
             use_camera_obs=self.config.use_camera_obs,
+            camera_names=self.config.camera_name,
+            camera_heights=self.config.image_size,
+            camera_widths=self.config.image_size,
             horizon=self.config.horizon,
         )
 
