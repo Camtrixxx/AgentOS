@@ -6,6 +6,16 @@ AgentOS 是一个 simulation-first 的具身 Agent 执行框架。它把"Agent �
 
 答案：一个多层的文件驱动协议——Planner → Tool → ACTION.md → Watchdog → Driver State Machine → ENVIRONMENT.md。
 
+## 实际运行效果
+
+Robosuite Lift 任务 — Panda 机械臂通过 5 阶段 FSM 策略完成 "lift the cube"：
+
+<p align="center">
+  <img src="docs/robosuite_lift.gif" width="600" alt="Robosuite Lift GIF">
+</p>
+
+从上到下：机械臂先对齐方块（move_above_cube），然后下降（descend），闭合夹爪（close_gripper），最后夹着方块上抬（lift → hold）。整个过程由 AgentOS 全栈驱动——Planner、Tool、ACTION.md、Watchdog、Driver 全部参与。
+
 ---
 
 ## 一句话理解
